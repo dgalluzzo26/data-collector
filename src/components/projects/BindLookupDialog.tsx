@@ -5,6 +5,10 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -23,11 +27,20 @@ interface BindLookupDialogProps {
   onBound: () => void;
 }
 
+function withCurrentOption(options: string[], current: string): string[] {
+  if (!current || options.includes(current)) return options;
+  return [current, ...options];
+}
+
 export default function BindLookupDialog({ open, project, onClose, onBound }: BindLookupDialogProps) {
   const [name, setName] = useState('');
   const [catalog, setCatalog] = useState('');
   const [schema, setSchema] = useState('');
   const [table, setTable] = useState('');
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [tables, setTables] = useState<string[]>([]);
+  const [loadingSchemas, setLoadingSchemas] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [binding, setBinding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,21 +48,89 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
   const [rowCount, setRowCount] = useState<number | null>(null);
   const [sampleRows, setSampleRows] = useState<Record<string, unknown>[]>([]);
 
+  const clearPreview = () => {
+    setColumns([]);
+    setRowCount(null);
+    setSampleRows([]);
+    setName('');
+  };
+
   useEffect(() => {
     if (!open) return;
     setName('');
     setCatalog('');
     setSchema('');
     setTable('');
+    setSchemas([]);
+    setTables([]);
     setError(null);
-    setColumns([]);
-    setRowCount(null);
-    setSampleRows([]);
+    clearPreview();
     void api.getConfig().then((cfg) => {
       setCatalog(cfg.default_data_catalog);
       setSchema(cfg.default_data_schema);
     });
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const catalogValue = catalog.trim();
+    if (!catalogValue) {
+      setSchemas([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingSchemas(true);
+    void api
+      .listUcSchemas(project.project_id, catalogValue)
+      .then((result) => {
+        if (!cancelled) setSchemas(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSchemas([]);
+          setError(err instanceof Error ? err.message : 'Failed to load schemas');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSchemas(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, catalog, project.project_id]);
+
+  useEffect(() => {
+    if (!open) return;
+    const catalogValue = catalog.trim();
+    const schemaValue = schema.trim();
+    if (!catalogValue || !schemaValue) {
+      setTables([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingTables(true);
+    void api
+      .listUcTables(project.project_id, catalogValue, schemaValue)
+      .then((result) => {
+        if (!cancelled) setTables(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setTables([]);
+          setError(err instanceof Error ? err.message : 'Failed to load tables');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTables(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, catalog, schema, project.project_id]);
 
   const preview = async () => {
     if (!catalog.trim() || !schema.trim() || !table.trim()) return;
@@ -66,13 +147,12 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
       setRowCount(previewResult.row_count);
       setSampleRows(previewResult.sample_rows);
       if (!name.trim()) {
-        setName(table.trim().replace(/_/g, ' '));
+        const defaultName = previewResult.columns[0]?.label || table.trim().replace(/_/g, ' ');
+        setName(defaultName);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Preview failed');
-      setColumns([]);
-      setRowCount(null);
-      setSampleRows([]);
+      clearPreview();
     } finally {
       setPreviewing(false);
     }
@@ -99,6 +179,13 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
     }
   };
 
+  const schemaOptions = withCurrentOption(schemas, schema);
+  const tableOptions = withCurrentOption(tables, table);
+  const nameOptions = withCurrentOption(
+    columns.map((col) => col.label),
+    name,
+  );
+
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle>Bind Unity Catalog table</DialogTitle>
@@ -111,23 +198,59 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
             size="small"
             label="Catalog"
             value={catalog}
-            onChange={(e) => setCatalog(e.target.value)}
+            onChange={(e) => {
+              setCatalog(e.target.value);
+              setSchema('');
+              setTable('');
+              clearPreview();
+            }}
           />
-          <TextField
-            size="small"
-            label="Schema"
-            value={schema}
-            onChange={(e) => setSchema(e.target.value)}
-          />
-          <TextField
-            size="small"
-            label="Table"
-            value={table}
-            onChange={(e) => setTable(e.target.value)}
-          />
+          <FormControl size="small" disabled={!catalog.trim() || loadingSchemas}>
+            <InputLabel id="bind-lookup-schema-label">Schema</InputLabel>
+            <Select
+              labelId="bind-lookup-schema-label"
+              label="Schema"
+              value={schema}
+              onChange={(e) => {
+                setSchema(e.target.value);
+                setTable('');
+                clearPreview();
+              }}
+            >
+              {schemaOptions.map((option) => (
+                <MenuItem key={option} value={option}>
+                  {option}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" disabled={!catalog.trim() || !schema.trim() || loadingTables}>
+            <InputLabel id="bind-lookup-table-label">Table</InputLabel>
+            <Select
+              labelId="bind-lookup-table-label"
+              label="Table"
+              value={table}
+              onChange={(e) => {
+                setTable(e.target.value);
+                clearPreview();
+              }}
+            >
+              {tableOptions.map((option) => (
+                <MenuItem key={option} value={option}>
+                  {option}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
         <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-          <BusyButton variant="outlined" onClick={preview} busy={previewing} busyLabel="Loading…">
+          <BusyButton
+            variant="outlined"
+            onClick={preview}
+            busy={previewing}
+            busyLabel="Loading…"
+            disabled={!catalog.trim() || !schema.trim() || !table.trim()}
+          >
             Preview table
           </BusyButton>
         </Box>
@@ -166,14 +289,21 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
             )}
           </Box>
         )}
-        <TextField
-          fullWidth
-          size="small"
-          label="Lookup name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          sx={{ mt: 1 }}
-        />
+        <FormControl fullWidth size="small" disabled={columns.length === 0} sx={{ mt: 1 }}>
+          <InputLabel id="bind-lookup-name-label">Lookup name</InputLabel>
+          <Select
+            labelId="bind-lookup-name-label"
+            label="Lookup name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          >
+            {nameOptions.map((option) => (
+              <MenuItem key={option} value={option}>
+                {option}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         {error && (
           <Typography variant="body2" color="error" sx={{ mt: 2 }}>
             {error}

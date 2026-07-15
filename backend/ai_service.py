@@ -97,9 +97,23 @@ def _normalize_lookup(raw: dict[str, Any]) -> LookupProposal:
     )
 
 
+def _dedupe_lookup_proposals(lookups: list[LookupProposal]) -> list[LookupProposal]:
+    """Keep the first lookup per slug — models sometimes repeat tables in one response."""
+    seen: set[str] = set()
+    deduped: list[LookupProposal] = []
+    for proposal in lookups:
+        if proposal.slug in seen:
+            continue
+        seen.add(proposal.slug)
+        deduped.append(proposal)
+    return deduped
+
+
 def _normalize_blueprint(data: dict[str, Any]) -> ProjectBlueprint:
     fields = [_normalize_field(f, idx) for idx, f in enumerate(data.get("fields") or [])]
-    lookups = [_normalize_lookup(lk) for lk in data.get("lookups") or []]
+    lookups = _dedupe_lookup_proposals(
+        [_normalize_lookup(lk) for lk in data.get("lookups") or []]
+    )
     fields = _wire_fields_to_lookups(fields, lookups)
     return ProjectBlueprint(
         name=(data.get("name") or "New collection")[:200],
@@ -294,26 +308,56 @@ def refine_project_fields(body: RefineProjectRequest, user_email: str, project_i
         raise
 
 
-def _apply_lookups(project_id: str, lookups: list[LookupProposal], user_email: str) -> dict[str, str]:
-    """Create lookups and return slug -> lookup_id map."""
+def _existing_lookup_slug_map(project_id: str) -> tuple[dict[str, LookupTable], dict[str, str]]:
+    """Index current project lookups by slug/name and build slug -> lookup_id map."""
+    existing_by_slug: dict[str, LookupTable] = {}
     slug_to_id: dict[str, str] = {}
-    for proposal in lookups:
-        created = lookup_repository.create_lookup(
-            project_id,
-            name=proposal.name,
-            description=proposal.description,
-            columns=proposal.columns,
-            created_by=user_email,
-            source="ai",
+    for lookup in lookup_repository.list_lookups(project_id):
+        existing_by_slug[lookup.slug] = lookup
+        existing_by_slug[repository.slugify(lookup.name)] = lookup
+        slug_to_id[lookup.slug] = lookup.lookup_id
+        slug_to_id[repository.slugify(lookup.name)] = lookup.lookup_id
+    return existing_by_slug, slug_to_id
+
+
+def _apply_lookups(project_id: str, lookups: list[LookupProposal], user_email: str) -> dict[str, str]:
+    """Create new lookups or reuse existing ones by slug; update rows when provided."""
+    existing_by_slug, slug_to_id = _existing_lookup_slug_map(project_id)
+
+    for proposal in _dedupe_lookup_proposals(lookups):
+        existing = existing_by_slug.get(proposal.slug) or existing_by_slug.get(
+            repository.slugify(proposal.name)
         )
-        slug_to_id[proposal.slug] = created.lookup_id
-        slug_to_id[repository.slugify(proposal.name)] = created.lookup_id
-        if proposal.rows:
-            rows = [
-                LookupRow(row_id=str(uuid.uuid4()), values=row, sort_order=idx)
-                for idx, row in enumerate(proposal.rows)
-            ]
-            lookup_repository.replace_lookup_rows(created.lookup_id, rows)
+        if existing:
+            lookup_id = existing.lookup_id
+            if proposal.rows:
+                rows = [
+                    LookupRow(row_id=str(uuid.uuid4()), values=row, sort_order=idx)
+                    for idx, row in enumerate(proposal.rows)
+                ]
+                lookup_repository.replace_lookup_rows(lookup_id, rows)
+        else:
+            created = lookup_repository.create_lookup(
+                project_id,
+                name=proposal.name,
+                description=proposal.description,
+                columns=proposal.columns,
+                created_by=user_email,
+                source="ai",
+            )
+            lookup_id = created.lookup_id
+            existing_by_slug[proposal.slug] = created
+            existing_by_slug[repository.slugify(proposal.name)] = created
+            if proposal.rows:
+                rows = [
+                    LookupRow(row_id=str(uuid.uuid4()), values=row, sort_order=idx)
+                    for idx, row in enumerate(proposal.rows)
+                ]
+                lookup_repository.replace_lookup_rows(lookup_id, rows)
+
+        slug_to_id[proposal.slug] = lookup_id
+        slug_to_id[repository.slugify(proposal.name)] = lookup_id
+
     return slug_to_id
 
 
@@ -381,12 +425,9 @@ def apply_project_proposal(
     body: ApplyProjectProposalRequest,
     user_email: str,
 ) -> None:
+    _, slug_to_id = _existing_lookup_slug_map(project_id)
     if body.lookups:
         slug_to_id = _apply_lookups(project_id, body.lookups, user_email)
-    else:
-        slug_to_id = {lk.slug: lk.lookup_id for lk in lookup_repository.list_lookups(project_id)}
-        for lk in lookup_repository.list_lookups(project_id):
-            slug_to_id[lk.slug] = lk.lookup_id
     fields = _resolve_field_lookups(
         body.fields, slug_to_id, proposals=body.lookups, project_id=project_id
     )

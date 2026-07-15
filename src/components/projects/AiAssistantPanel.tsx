@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -42,6 +42,12 @@ export default function AiAssistantPanel({ project, draftFields, onApplied }: Ai
   } | null>(null);
 
   const currentFields = designerBaseline(project, draftFields);
+
+  const newLookupCount = useMemo(() => {
+    if (!preview) return 0;
+    const existing = new Set((project.lookups || []).map((l) => l.slug));
+    return preview.lookups.filter((l) => !existing.has(l.slug)).length;
+  }, [preview, project.lookups]);
 
   const refine = async () => {
     if (!instruction.trim()) return;
@@ -139,9 +145,9 @@ export default function AiAssistantPanel({ project, draftFields, onApplied }: Ai
                 <Chip key={f.field_key} size="small" label={`${f.label} (${f.field_type})`} />
               ))}
             </Box>
-            {preview.lookups.length > 0 && (
+            {newLookupCount > 0 && (
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                + {preview.lookups.length} new lookup table(s)
+                + {newLookupCount} new lookup table(s)
               </Typography>
             )}
             <Box sx={{ display: 'flex', gap: 1 }}>

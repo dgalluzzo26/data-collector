@@ -192,6 +192,18 @@ export const api = {
       undefined,
       'Loading table preview…',
     ),
+  listUcSchemas: (projectId: string, catalog: string) =>
+    request<string[]>(
+      `/projects/${projectId}/lookups/uc-schemas?catalog=${encodeURIComponent(catalog)}`,
+      undefined,
+      'Loading schemas…',
+    ),
+  listUcTables: (projectId: string, catalog: string, schema: string) =>
+    request<string[]>(
+      `/projects/${projectId}/lookups/uc-tables?catalog=${encodeURIComponent(catalog)}&schema=${encodeURIComponent(schema)}`,
+      undefined,
+      'Loading tables…',
+    ),
   bindLookup: (projectId: string, body: BindLookupPayload) =>
     request<LookupTable>(
       `/projects/${projectId}/lookups/bind`,
@@ -275,5 +287,6 @@ export const api = {
       `/ai/projects/${projectId}/apply-proposal`,
       { method: 'POST', body: JSON.stringify(body) },
       'Applying changes…',
+      120_000,
     ),
 };

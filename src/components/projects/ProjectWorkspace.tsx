@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -26,6 +26,8 @@ import GenieAskPanel from './GenieAskPanel';
 import DataEntryUrl from '../common/DataEntryUrl';
 
 type TabKey = 'records' | 'designer' | 'lookups' | 'members' | 'settings' | 'genie';
+
+const PUBLISH_ACTION_TABS: TabKey[] = ['designer', 'lookups', 'records', 'members', 'settings'];
 
 export default function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -139,7 +141,7 @@ export default function ProjectWorkspace() {
           )}
         </Box>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {tab === 'designer' && isAdmin && (
+          {isAdmin && PUBLISH_ACTION_TABS.includes(tab) && (
             <>
               <BusyButton variant="outlined" onClick={saveDesign} busy={saving} busyLabel="Saving…">
                 Save draft

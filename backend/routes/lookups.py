@@ -39,6 +39,33 @@ def preview_uc_table(
     return UcTablePreview(**preview)
 
 
+@router.get("/uc-schemas", response_model=list[str])
+def list_uc_schemas(
+    project_id: str,
+    request: Request,
+    catalog: str = Query(min_length=1),
+):
+    require_role(project_id, request, "admin")
+    try:
+        return uc_util.list_schemas(catalog.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/uc-tables", response_model=list[str])
+def list_uc_tables(
+    project_id: str,
+    request: Request,
+    catalog: str = Query(min_length=1),
+    schema: str = Query(min_length=1),
+):
+    require_role(project_id, request, "admin")
+    try:
+        return uc_util.list_tables(catalog.strip(), schema.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/bind", response_model=LookupTable, status_code=201)
 def bind_lookup(project_id: str, body: BindLookupRequest, request: Request):
     user, _ = require_role(project_id, request, "admin")

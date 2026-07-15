@@ -14,6 +14,51 @@ def _table_fqn(catalog: str, schema: str, table: str) -> str:
     return config.table_fqn(catalog, schema, table)
 
 
+def _schema_fqn(catalog: str, schema: str) -> str:
+    return f"{config.quote_identifier(catalog)}.{config.quote_identifier(schema)}"
+
+
+def _row_name(row: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    for value in row.values():
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def list_schemas(catalog: str) -> list[str]:
+    """List schemas in a Unity Catalog catalog."""
+    config.validate_identifier(catalog, "catalog")
+    catalog_sql = config.quote_identifier(catalog)
+    rows = fetchall(f"SHOW SCHEMAS IN {catalog_sql}")
+    names = sorted(
+        {
+            name
+            for row in rows
+            if (name := _row_name(row, "databaseName", "namespace", "schemaName", "schema"))
+        }
+    )
+    return names
+
+
+def list_tables(catalog: str, schema: str) -> list[str]:
+    """List tables in a Unity Catalog schema."""
+    config.validate_identifier(catalog, "catalog")
+    config.validate_identifier(schema, "schema")
+    rows = fetchall(f"SHOW TABLES IN {_schema_fqn(catalog, schema)}")
+    names = sorted(
+        {
+            name
+            for row in rows
+            if (name := _row_name(row, "tableName", "table", "name"))
+        }
+    )
+    return names
+
+
 def describe_table_columns(catalog: str, schema: str, table: str) -> list[LookupColumn]:
     """Return column metadata for a UC table."""
     config.validate_identifier(catalog, "catalog")
