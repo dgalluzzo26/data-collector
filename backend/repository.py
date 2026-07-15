@@ -32,6 +32,34 @@ def _is_lakebase(project: dict[str, Any]) -> bool:
     return project.get("storage_type") == "lakebase"
 
 
+def _is_existing_uc(project: dict[str, Any]) -> bool:
+    return (project.get("storage_mode") or "managed") == "existing_uc"
+
+
+def _uses_staged_sync(project: dict[str, Any]) -> bool:
+    return (
+        project.get("storage_type") == "uc_delta"
+        and project.get("record_sync_mode") == "staged"
+    )
+
+
+def _record_key_column(project: dict[str, Any]) -> Optional[str]:
+    if not _is_existing_uc(project):
+        return None
+    col = project.get("record_key_column")
+    return str(col).strip() if col else None
+
+
+def _quote_col(name: str) -> str:
+    from backend.config import quote_identifier
+
+    return quote_identifier(name)
+
+
+def _table_has_column(existing: set[str], col: str) -> bool:
+    return col.lower() in existing
+
+
 def _parse_field(row: dict[str, Any]) -> FieldDefinition:
     config_json = row.get("config_json")
     parsed = json.loads(config_json) if config_json else None
@@ -137,6 +165,8 @@ def create_project(
     name: str,
     description: Optional[str],
     storage_type: str,
+    storage_mode: str = "managed",
+    record_key_column: Optional[str] = None,
     target_catalog: str,
     target_schema: str,
     target_table: str,
@@ -150,9 +180,10 @@ def create_project(
         f"""
         INSERT INTO {_table("projects")} (
             project_id, name, slug, description, storage_type,
+            storage_mode, record_key_column,
             target_catalog, target_schema, target_table,
             schema_version, status, created_at, created_by, updated_at, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'draft', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'draft', ?, ?, ?, ?)
         """,
         (
             project_id,
@@ -160,6 +191,8 @@ def create_project(
             slug,
             description,
             storage_type,
+            storage_mode,
+            record_key_column,
             target_catalog,
             target_schema,
             target_table,
@@ -190,6 +223,29 @@ def remove_member(project_id: str, user_email: str) -> None:
     )
 
 
+def delete_project(project_id: str) -> None:
+    """Remove collection metadata. Does not drop the backing UC/Lakebase data table."""
+    if not get_project(project_id):
+        raise ValueError("Project not found")
+
+    from backend import lookup_repository
+
+    for lookup in lookup_repository.list_lookups(project_id):
+        lookup_repository.delete_lookup(project_id, lookup.lookup_id)
+
+    for table in (
+        "staged_record_changes",
+        "record_audit_log",
+        "schema_versions",
+        "form_layouts",
+        "field_definitions",
+        "project_members",
+        "ai_generation_log",
+        "projects",
+    ):
+        execute(f"DELETE FROM {_table(table)} WHERE project_id = ?", (project_id,))
+
+
 def update_project(project_id: str, updates: dict[str, Any], updated_by: str) -> None:
     if not updates:
         return
@@ -206,23 +262,30 @@ def replace_draft_fields(project_id: str, fields: list[FieldDefinition], user_em
         f"DELETE FROM {_table('field_definitions')} WHERE project_id = ? AND is_published = false",
         (project_id,),
     )
-    for field in fields:
+    if fields:
+        row_placeholder = "(?, ?, ?, ?, ?, ?, ?, 0, false)"
+        values_sql = ", ".join(row_placeholder for _ in fields)
+        params: list[Any] = []
+        for field in fields:
+            params.extend(
+                [
+                    project_id,
+                    field.field_key,
+                    field.label,
+                    field.field_type,
+                    json.dumps(field.config_json) if field.config_json else None,
+                    field.sort_order,
+                    field.is_required,
+                ]
+            )
         execute(
             f"""
             INSERT INTO {_table("field_definitions")} (
                 project_id, field_key, label, field_type, config_json,
                 sort_order, is_required, schema_version, is_published
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, false)
+            ) VALUES {values_sql}
             """,
-            (
-                project_id,
-                field.field_key,
-                field.label,
-                field.field_type,
-                json.dumps(field.config_json) if field.config_json else None,
-                field.sort_order,
-                field.is_required,
-            ),
+            params,
         )
     update_project(project_id, {}, user_email)
 
@@ -244,10 +307,194 @@ def _sql_type(field_type: str) -> str:
     return mapping.get(field_type, "STRING")
 
 
+def _describe_column_names(data_table: str) -> set[str]:
+    rows = fetchall(f"DESCRIBE TABLE {data_table}")
+    names: set[str] = set()
+    for row in rows:
+        name = str(row.get("col_name") or row.get("column_name") or "").strip()
+        if name and not name.startswith("#"):
+            names.add(name.lower())
+    return names
+
+
+def _ensure_audit_columns(
+    data_table: str,
+    *,
+    include_record_id: bool = True,
+    existing: Optional[set[str]] = None,
+) -> None:
+    """Add app audit columns to a UC table when missing."""
+    if existing is None:
+        existing = _describe_column_names(data_table)
+    audit_cols: list[tuple[str, str]] = [
+        ("_created_at", "TIMESTAMP"),
+        ("_created_by", "STRING"),
+        ("_updated_at", "TIMESTAMP"),
+        ("_updated_by", "STRING"),
+    ]
+    if include_record_id:
+        audit_cols.insert(0, ("_record_id", "STRING"))
+    missing = [
+        (col_name, col_type)
+        for col_name, col_type in audit_cols
+        if col_name.lower() not in existing
+    ]
+    if missing:
+        cols_sql = ", ".join(f"{_quote_col(name)} {col_type}" for name, col_type in missing)
+        execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
+        for col_name, _ in missing:
+            existing.add(col_name.lower())
+    if include_record_id:
+        execute(
+            f"UPDATE {data_table} SET {_quote_col('_record_id')} = uuid() "
+            f"WHERE {_quote_col('_record_id')} IS NULL OR {_quote_col('_record_id')} = ''"
+        )
+
+
+def _ensure_app_metadata_columns(
+    data_table: str,
+    *,
+    existing: Optional[set[str]] = None,
+) -> None:
+    """Add app record-tracking columns to an existing UC table when missing."""
+    _ensure_audit_columns(data_table, include_record_id=True, existing=existing)
+
+
+def _try_describe_column_names(data_table: str) -> Optional[set[str]]:
+    try:
+        return _describe_column_names(data_table)
+    except Exception:
+        return None
+
+
+def _add_missing_field_columns(
+    data_table: str,
+    fields: list[FieldDefinition],
+    previous_keys: set[str],
+    existing_cols: set[str],
+) -> None:
+    from backend.config import quote_identifier
+
+    missing_fields = [
+        field
+        for field in fields
+        if field.field_key not in previous_keys and field.field_key.lower() not in existing_cols
+    ]
+    if not missing_fields:
+        return
+    cols_sql = ", ".join(
+        f"{quote_identifier(field.field_key)} {_sql_type(field.field_type)}"
+        for field in missing_fields
+    )
+    try:
+        execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "already exists" not in msg and "duplicate" not in msg:
+            raise
+    for field in missing_fields:
+        existing_cols.add(field.field_key.lower())
+
+
+def _insert_published_fields(
+    project_id: str,
+    fields: list[FieldDefinition],
+    version: int,
+) -> None:
+    if not fields:
+        return
+    row_placeholder = "(?, ?, ?, ?, ?, ?, ?, ?, true)"
+    values_sql = ", ".join(row_placeholder for _ in fields)
+    params: list[Any] = []
+    for field in fields:
+        params.extend(
+            [
+                project_id,
+                field.field_key,
+                field.label,
+                field.field_type,
+                json.dumps(field.config_json) if field.config_json else None,
+                field.sort_order,
+                field.is_required,
+                version,
+            ]
+        )
+    execute(
+        f"""
+        INSERT INTO {_table('field_definitions')} (
+            project_id, field_key, label, field_type, config_json,
+            sort_order, is_required, schema_version, is_published
+        ) VALUES {values_sql}
+        """,
+        params,
+    )
+
+
+def _build_record_select_parts(
+    data_table: str,
+    fields: list[FieldDefinition],
+    record_key_col: Optional[str],
+) -> list[str]:
+    existing = _describe_column_names(data_table)
+    select_parts: list[str] = []
+    if record_key_col:
+        select_parts.append(_quote_col(record_key_col))
+    elif _table_has_column(existing, "_record_id"):
+        select_parts.append(_quote_col("_record_id"))
+    for col in ["_created_at", "_created_by", "_updated_at", "_updated_by"]:
+        if _table_has_column(existing, col):
+            select_parts.append(_quote_col(col))
+    for field in fields:
+        if _table_has_column(existing, field.field_key):
+            select_parts.append(_quote_col(field.field_key))
+    return select_parts
+
+
+def _records_order_clause(data_table: str, record_key_col: Optional[str]) -> str:
+    existing = _describe_column_names(data_table)
+    if _table_has_column(existing, "_updated_at"):
+        return f"{_quote_col('_updated_at')} DESC NULLS LAST"
+    if record_key_col:
+        return f"{_quote_col(record_key_col)} DESC"
+    return f"{_quote_col('_record_id')} DESC"
+
+
+def _row_to_record(
+    row: dict[str, Any],
+    fields: list[FieldDefinition],
+    record_key_col: Optional[str],
+) -> dict[str, Any]:
+    if record_key_col:
+        record_id = str(row[record_key_col]) if row.get(record_key_col) is not None else ""
+    else:
+        record_id = str(row["_record_id"])
+    field_keys = {f.field_key for f in fields}
+    values = {k: row[k] for k in field_keys if k in row}
+    return {
+        "record_id": record_id,
+        "values": values,
+        "created_at": row.get("_created_at"),
+        "created_by": row.get("_created_by"),
+        "updated_at": row.get("_updated_at"),
+        "updated_by": row.get("_updated_by"),
+    }
+
+
+def _record_where_clause(record_key_col: Optional[str], record_id: str) -> tuple[str, list[Any]]:
+    if record_key_col:
+        return f"{_quote_col(record_key_col)} = ?", [record_id]
+    return f"{_quote_col('_record_id')} = ?", [record_id]
+
+
 def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
     project = get_project(project_id)
     if not project:
         raise ValueError("Project not found")
+
+    if project.get("storage_type") == "uc_delta" and not project.get("record_sync_mode"):
+        raise ValueError(
+            "Choose how record changes sync to Unity Catalog in Settings before publishing."
+        )
 
     fields = list_fields(project_id, published_only=False)
     draft_fields = [f for f in fields if not f.is_published]
@@ -255,9 +502,7 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
         draft_fields = fields
 
     version = int(project["schema_version"]) + 1
-
-    previous_published = list_fields(project_id, published_only=True)
-    previous_keys = {f.field_key for f in previous_published}
+    previous_keys = {f.field_key for f in fields if f.is_published}
 
     if _is_lakebase(project):
         from backend import lakebase_storage
@@ -273,28 +518,30 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
             f"{quote_identifier(catalog)}.{quote_identifier(schema)}."
             f"{quote_identifier(table)}"
         )
+        existing_cols = _try_describe_column_names(data_table)
 
-        columns = [
-            "_record_id STRING NOT NULL",
-            "_created_at TIMESTAMP NOT NULL",
-            "_created_by STRING NOT NULL",
-            "_updated_at TIMESTAMP",
-            "_updated_by STRING",
-        ]
-        for field in draft_fields:
-            columns.append(f"{quote_identifier(field.field_key)} {_sql_type(field.field_type)}")
+        if _is_existing_uc(project):
+            if existing_cols is None:
+                raise ValueError(
+                    f"Table {catalog}.{schema}.{table} does not exist"
+                )
+            _ensure_audit_columns(data_table, include_record_id=False, existing=existing_cols)
+            _add_missing_field_columns(data_table, draft_fields, previous_keys, existing_cols)
+        elif existing_cols is None:
+            columns = [
+                "_record_id STRING NOT NULL",
+                "_created_at TIMESTAMP NOT NULL",
+                "_created_by STRING NOT NULL",
+                "_updated_at TIMESTAMP",
+                "_updated_by STRING",
+            ]
+            for field in draft_fields:
+                columns.append(f"{quote_identifier(field.field_key)} {_sql_type(field.field_type)}")
 
-        execute(f"CREATE TABLE IF NOT EXISTS {data_table} ({', '.join(columns)}) USING DELTA")
-
-        for field in draft_fields:
-            if field.field_key not in previous_keys:
-                col = f"{quote_identifier(field.field_key)} {_sql_type(field.field_type)}"
-                try:
-                    execute(f"ALTER TABLE {data_table} ADD COLUMN {col}")
-                except Exception as exc:
-                    msg = str(exc).lower()
-                    if "already exists" not in msg and "duplicate" not in msg:
-                        raise
+            execute(f"CREATE TABLE IF NOT EXISTS {data_table} ({', '.join(columns)}) USING DELTA")
+        else:
+            _ensure_app_metadata_columns(data_table, existing=existing_cols)
+            _add_missing_field_columns(data_table, draft_fields, previous_keys, existing_cols)
 
     # Drop superseded published definitions before inserting the new version.
     execute(
@@ -302,25 +549,7 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
         (project_id, version),
     )
 
-    for field in draft_fields:
-        execute(
-            f"""
-            INSERT INTO {_table('field_definitions')} (
-                project_id, field_key, label, field_type, config_json,
-                sort_order, is_required, schema_version, is_published
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)
-            """,
-            (
-                project_id,
-                field.field_key,
-                field.label,
-                field.field_type,
-                json.dumps(field.config_json) if field.config_json else None,
-                field.sort_order,
-                field.is_required,
-                version,
-            ),
-        )
+    _insert_published_fields(project_id, draft_fields, version)
 
     execute(
         f"""
@@ -341,17 +570,6 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
         f"DELETE FROM {_table('field_definitions')} WHERE project_id = ? AND is_published = false",
         (project_id,),
     )
-    from backend import genie_service
-
-    refreshed = get_project(project_id)
-    if refreshed and genie_service.genie_available_for_project(refreshed):
-        genie_service.provision_genie_space(project_id, user_email)
-    elif refreshed and _is_lakebase(refreshed):
-        update_project(
-            project_id,
-            {"genie_status": "disabled", "genie_error": None},
-            user_email,
-        )
     return get_project(project_id)  # type: ignore[return-value]
 
 
@@ -365,29 +583,47 @@ def _data_table_fqn(project: dict[str, Any]) -> str:
     )
 
 
-def list_records(project: dict[str, Any], fields: list[FieldDefinition]) -> list[dict[str, Any]]:
+def list_records(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    *,
+    limit: int = 500,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
     if _is_lakebase(project):
         from backend import lakebase_storage
 
         return lakebase_storage.list_records(project, fields)
-    field_cols = ", ".join(f"`{f.field_key}`" for f in fields) if fields else ""
-    extra = f", {field_cols}" if field_cols else ""
-    sql = f"SELECT _record_id, _created_at, _created_by, _updated_at, _updated_by{extra} FROM {_data_table_fqn(project)} ORDER BY _updated_at DESC NULLS LAST, _created_at DESC"
+    uc_rows = _list_records_from_uc(project, fields, limit=limit, offset=offset)
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        staged = staged_records.list_staged(project["project_id"])
+        return staged_records.merge_uc_with_staged(uc_rows, staged)
+    return uc_rows
+
+
+def _list_records_from_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    *,
+    limit: int = 500,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    select_parts = _build_record_select_parts(data_table, fields, record_key_col)
+    if not select_parts:
+        return []
+    order = _records_order_clause(data_table, record_key_col)
+    safe_limit = max(1, min(int(limit), 5000))
+    safe_offset = max(0, int(offset))
+    sql = (
+        f"SELECT {', '.join(select_parts)} FROM {data_table} "
+        f"ORDER BY {order} LIMIT {safe_limit} OFFSET {safe_offset}"
+    )
     rows = fetchall(sql)
-    result = []
-    for row in rows:
-        values = {k: row[k] for k in row if not k.startswith("_")}
-        result.append(
-            {
-                "record_id": row["_record_id"],
-                "values": values,
-                "created_at": row.get("_created_at"),
-                "created_by": row.get("_created_by"),
-                "updated_at": row.get("_updated_at"),
-                "updated_by": row.get("_updated_by"),
-            }
-        )
-    return result
+    return [_row_to_record(row, fields, record_key_col) for row in rows]
 
 
 def get_record(
@@ -399,23 +635,99 @@ def get_record(
         from backend import lakebase_storage
 
         return lakebase_storage.get_record(project, fields, record_id)
-    field_cols = ", ".join(f"`{f.field_key}`" for f in fields) if fields else ""
-    extra = f", {field_cols}" if field_cols else ""
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        staged_row = staged_records.get_staged(project["project_id"], record_id)
+        if staged_row and staged_row["operation"] == "delete":
+            return None
+        uc_row = _get_record_from_uc(project, fields, record_id)
+        if staged_row:
+            if staged_row["operation"] == "insert":
+                return staged_records._staged_to_record(staged_row)
+            if staged_row["operation"] == "update":
+                staged_rec = staged_records._staged_to_record(staged_row)
+                if uc_row:
+                    return {
+                        **uc_row,
+                        "values": {**uc_row["values"], **staged_rec["values"]},
+                        "updated_at": staged_rec.get("updated_at"),
+                        "updated_by": staged_rec.get("updated_by"),
+                    }
+                return staged_rec
+        return uc_row
+    return _get_record_from_uc(project, fields, record_id)
+
+
+def _get_record_from_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    record_id: str,
+) -> Optional[dict[str, Any]]:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    select_parts = _build_record_select_parts(data_table, fields, record_key_col)
+    if not select_parts:
+        return None
+    where_sql, params = _record_where_clause(record_key_col, record_id)
     row = fetchone(
-        f"SELECT _record_id, _created_at, _created_by, _updated_at, _updated_by{extra} FROM {_data_table_fqn(project)} WHERE _record_id = ?",
-        (record_id,),
+        f"SELECT {', '.join(select_parts)} FROM {data_table} WHERE {where_sql}",
+        params,
     )
     if not row:
         return None
-    values = {k: row[k] for k in row if not k.startswith("_")}
-    return {
-        "record_id": row["_record_id"],
-        "values": values,
-        "created_at": row.get("_created_at"),
-        "created_by": row.get("_created_by"),
-        "updated_at": row.get("_updated_at"),
-        "updated_by": row.get("_updated_by"),
-    }
+    return _row_to_record(row, fields, record_key_col)
+
+
+def _resolve_new_record_id(
+    project: dict[str, Any],
+    values: dict[str, Any],
+) -> str:
+    record_key_col = _record_key_column(project)
+    if record_key_col:
+        key_val = values.get(record_key_col)
+        if key_val is None or (isinstance(key_val, str) and not key_val.strip()):
+            raise ValueError(f"{record_key_col} is required")
+        return str(key_val)
+    return str(uuid.uuid4())
+
+
+def _assert_record_id_available(
+    project: dict[str, Any],
+    record_id: str,
+    *,
+    check_uc: bool = True,
+    check_staging: bool = True,
+) -> None:
+    if check_uc:
+        data_table = _data_table_fqn(project)
+        record_key_col = _record_key_column(project)
+        if record_key_col:
+            key_sql = _quote_col(record_key_col)
+            dup = fetchone(
+                f"SELECT 1 AS found FROM {data_table} WHERE {key_sql} = ?",
+                (record_id,),
+            )
+        else:
+            dup = fetchone(
+                f"SELECT 1 AS found FROM {data_table} WHERE {_quote_col('_record_id')} = ?",
+                (record_id,),
+            )
+        if dup:
+            raise ValueError("A record with this id already exists")
+    if check_staging and _uses_staged_sync(project):
+        from backend import staged_records
+
+        if staged_records.record_id_exists_in_staging(project["project_id"], record_id):
+            raise ValueError("A staged record with this id already exists")
+
+
+def _record_exists_in_uc(project: dict[str, Any], record_id: str) -> bool:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    where_sql, params = _record_where_clause(record_key_col, record_id)
+    row = fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
+    return row is not None
 
 
 def create_record(
@@ -428,12 +740,71 @@ def create_record(
         from backend import lakebase_storage
 
         return lakebase_storage.create_record(project, fields, values, user_email)
-    record_id = str(uuid.uuid4())
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        record_id = _resolve_new_record_id(project, values)
+        _assert_record_id_available(project, record_id)
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            "insert",
+            values,
+            user_email,
+        )
+        now = _now()
+        return {
+            "record_id": record_id,
+            "values": values,
+            "created_at": now,
+            "created_by": user_email,
+            "updated_at": now,
+            "updated_by": user_email,
+        }
+    return _insert_record_to_uc(project, fields, values, user_email)
+
+
+def _insert_record_to_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    values: dict[str, Any],
+    user_email: str,
+    *,
+    record_id: Optional[str] = None,
+    skip_duplicate_check: bool = False,
+) -> dict[str, Any]:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
     now = _now()
-    cols = ["_record_id", "_created_at", "_created_by", "_updated_at", "_updated_by"]
-    vals = [record_id, now, user_email, now, user_email]
+    existing_cols = _describe_column_names(data_table)
+
+    if record_id is None:
+        record_id = _resolve_new_record_id(project, values)
+    if not skip_duplicate_check:
+        _assert_record_id_available(project, record_id, check_staging=False)
+
+    cols: list[str] = []
+    vals: list[Any] = []
+    if not record_key_col and _table_has_column(existing_cols, "_record_id"):
+        cols.append(_quote_col("_record_id"))
+        vals.append(record_id)
+    if _table_has_column(existing_cols, "_created_at"):
+        cols.append(_quote_col("_created_at"))
+        vals.append(now)
+    if _table_has_column(existing_cols, "_created_by"):
+        cols.append(_quote_col("_created_by"))
+        vals.append(user_email)
+    if _table_has_column(existing_cols, "_updated_at"):
+        cols.append(_quote_col("_updated_at"))
+        vals.append(now)
+    if _table_has_column(existing_cols, "_updated_by"):
+        cols.append(_quote_col("_updated_by"))
+        vals.append(user_email)
+
     for field in fields:
-        cols.append(f"`{field.field_key}`")
+        if not _table_has_column(existing_cols, field.field_key):
+            continue
+        cols.append(_quote_col(field.field_key))
         val = values.get(field.field_key)
         if isinstance(val, (list, dict)):
             vals.append(json.dumps(val))
@@ -442,7 +813,7 @@ def create_record(
 
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
-    execute(f"INSERT INTO {_data_table_fqn(project)} ({col_sql}) VALUES ({placeholders})", vals)
+    execute(f"INSERT INTO {data_table} ({col_sql}) VALUES ({placeholders})", vals)
     return {
         "record_id": record_id,
         "values": values,
@@ -465,32 +836,156 @@ def update_record(
 
         lakebase_storage.update_record(project, fields, record_id, values, user_email)
         return
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        existing = get_record(project, fields, record_id)
+        if not existing:
+            raise ValueError("Record not found")
+        merged_values = {**existing["values"], **values}
+        staged_row = staged_records.get_staged(project["project_id"], record_id)
+        operation = "insert" if staged_row and staged_row["operation"] == "insert" else "update"
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            operation,
+            merged_values,
+            user_email,
+        )
+        return
+    _update_record_in_uc(project, fields, record_id, values, user_email)
+
+
+def _update_record_in_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    record_id: str,
+    values: dict[str, Any],
+    user_email: str,
+) -> None:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    existing_cols = _describe_column_names(data_table)
     now = _now()
-    sets = ["_updated_at = ?", "_updated_by = ?"]
-    params: list[Any] = [now, user_email]
+    sets: list[str] = []
+    params: list[Any] = []
+    if _table_has_column(existing_cols, "_updated_at"):
+        sets.append(f"{_quote_col('_updated_at')} = ?")
+        params.append(now)
+    if _table_has_column(existing_cols, "_updated_by"):
+        sets.append(f"{_quote_col('_updated_by')} = ?")
+        params.append(user_email)
     for field in fields:
-        if field.field_key in values:
-            sets.append(f"`{field.field_key}` = ?")
+        if field.field_key in values and field.field_key != record_key_col:
+            if not _table_has_column(existing_cols, field.field_key):
+                continue
+            sets.append(f"{_quote_col(field.field_key)} = ?")
             val = values[field.field_key]
             params.append(json.dumps(val) if isinstance(val, (list, dict)) else val)
-    params.append(record_id)
-    execute(
-        f"UPDATE {_data_table_fqn(project)} SET {', '.join(sets)} WHERE _record_id = ?",
-        params,
-    )
+    if not sets:
+        return
+    where_sql, where_params = _record_where_clause(record_key_col, record_id)
+    params.extend(where_params)
+    execute(f"UPDATE {data_table} SET {', '.join(sets)} WHERE {where_sql}", params)
 
 
-def delete_record(project: dict[str, Any], record_id: str) -> bool:
+def delete_record(project: dict[str, Any], record_id: str, user_email: str) -> bool:
     """Delete a record by id. Returns False if not found."""
     if _is_lakebase(project):
         from backend import lakebase_storage
 
         return lakebase_storage.delete_record(project, record_id)
-    existing = fetchone(
-        f"SELECT _record_id FROM {_data_table_fqn(project)} WHERE _record_id = ?",
-        (record_id,),
-    )
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        staged_row = staged_records.get_staged(project["project_id"], record_id)
+        uc_exists = _record_exists_in_uc(project, record_id)
+        if not uc_exists and not staged_row:
+            return False
+        if staged_row and staged_row["operation"] == "insert" and not uc_exists:
+            staged_records.delete_staged(project["project_id"], record_id)
+            return True
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            "delete",
+            None,
+            user_email,
+        )
+        return True
+    return _delete_record_from_uc(project, record_id)
+
+
+def _delete_record_from_uc(project: dict[str, Any], record_id: str) -> bool:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    where_sql, params = _record_where_clause(record_key_col, record_id)
+    existing = fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
     if not existing:
         return False
-    execute(f"DELETE FROM {_data_table_fqn(project)} WHERE _record_id = ?", (record_id,))
+    execute(f"DELETE FROM {data_table} WHERE {where_sql}", params)
     return True
+
+
+def count_staged_changes(project_id: str) -> int:
+    from backend import staged_records
+
+    return staged_records.count_staged(project_id)
+
+
+def sync_staged_records(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    user_email: str,
+) -> dict[str, int]:
+    from backend import staged_records
+
+    if not _uses_staged_sync(project):
+        raise ValueError("This collection does not use staged record sync")
+
+    rows = staged_records.list_staged(project["project_id"])
+    if not rows:
+        return {"synced": 0, "inserted": 0, "updated": 0, "deleted": 0}
+
+    inserted = updated = deleted = 0
+    for row in rows:
+        record_id = row["record_id"]
+        operation = row["operation"]
+        if operation == "delete":
+            if _delete_record_from_uc(project, record_id):
+                deleted += 1
+            continue
+        values = json.loads(row["values_json"] or "{}")
+        if operation == "insert":
+            if _get_record_from_uc(project, fields, record_id):
+                _update_record_in_uc(project, fields, record_id, values, user_email)
+                updated += 1
+            else:
+                _insert_record_to_uc(
+                    project,
+                    fields,
+                    values,
+                    user_email,
+                    record_id=record_id,
+                    skip_duplicate_check=True,
+                )
+                inserted += 1
+            continue
+        if operation == "update":
+            if _get_record_from_uc(project, fields, record_id):
+                _update_record_in_uc(project, fields, record_id, values, user_email)
+                updated += 1
+            else:
+                _insert_record_to_uc(
+                    project,
+                    fields,
+                    values,
+                    user_email,
+                    record_id=record_id,
+                    skip_duplicate_check=True,
+                )
+                inserted += 1
+
+    staged_records.clear_staged(project["project_id"])
+    synced = inserted + updated + deleted
+    return {"synced": synced, "inserted": inserted, "updated": updated, "deleted": deleted}

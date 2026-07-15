@@ -22,6 +22,9 @@ TABLES = {
         genie_status STRING,
         genie_last_synced_at TIMESTAMP,
         genie_error STRING,
+        storage_mode STRING,
+        record_key_column STRING,
+        record_sync_mode STRING,
         schema_version INT NOT NULL,
         status STRING NOT NULL,
         created_at TIMESTAMP NOT NULL,
@@ -85,6 +88,15 @@ TABLES = {
         row_id STRING NOT NULL,
         values_json STRING NOT NULL,
         sort_order INT NOT NULL""",
+    "staged_record_changes": """
+        project_id STRING NOT NULL,
+        record_id STRING NOT NULL,
+        operation STRING NOT NULL,
+        values_json STRING,
+        staged_at TIMESTAMP NOT NULL,
+        staged_by STRING NOT NULL,
+        updated_at TIMESTAMP,
+        updated_by STRING""",
     "ai_generation_log": """
         log_id STRING NOT NULL,
         project_id STRING,
@@ -115,6 +127,9 @@ def migration_statements(catalog: str, schema: str) -> list[str]:
         f"ALTER TABLE {proj} ADD COLUMN sync_catalog STRING",
         f"ALTER TABLE {proj} ADD COLUMN sync_schema STRING",
         f"ALTER TABLE {proj} ADD COLUMN sync_table STRING",
+        f"ALTER TABLE {proj} ADD COLUMN storage_mode STRING",
+        f"ALTER TABLE {proj} ADD COLUMN record_key_column STRING",
+        f"ALTER TABLE {proj} ADD COLUMN record_sync_mode STRING",
     ]
 
 

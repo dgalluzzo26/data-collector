@@ -36,6 +36,7 @@ interface DynamicFormProps {
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
   readOnly?: boolean;
+  lockedFields?: Set<string>;
   errors?: Record<string, string>;
 }
 
@@ -46,6 +47,7 @@ export default function DynamicForm({
   values,
   onChange,
   readOnly = false,
+  lockedFields,
   errors = {},
 }: DynamicFormProps) {
   const [lookupOptions, setLookupOptions] = useState<LookupOptionMap>({});
@@ -89,6 +91,8 @@ export default function DynamicForm({
     onChange({ ...values, [key]: value });
   };
 
+  const isLocked = (fieldKey: string) => readOnly || Boolean(lockedFields?.has(fieldKey));
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       {sorted.map((field) => {
@@ -103,7 +107,7 @@ export default function DynamicForm({
                 control={
                   <Checkbox
                     checked={Boolean(value)}
-                    disabled={readOnly}
+                    disabled={isLocked(field.field_key)}
                     onChange={(e) => setValue(field.field_key, e.target.checked)}
                   />
                 }
@@ -135,7 +139,7 @@ export default function DynamicForm({
               <Select
                 label={field.label}
                 value={(value as string) ?? ''}
-                disabled={readOnly}
+                disabled={isLocked(field.field_key)}
                 onChange={(e) => setValue(field.field_key, e.target.value)}
                 MenuProps={{ disablePortal: false }}
               >
@@ -163,7 +167,7 @@ export default function DynamicForm({
                 multiple
                 label={field.label}
                 value={(value as string[]) ?? []}
-                disabled={readOnly}
+                disabled={isLocked(field.field_key)}
                 onChange={(e) => setValue(field.field_key, e.target.value)}
                 MenuProps={{ disablePortal: false }}
               >
@@ -201,7 +205,7 @@ export default function DynamicForm({
             label={`${field.label}${field.is_required ? ' *' : ''}`}
             type={inputType}
             value={(value as string | number | undefined) ?? ''}
-            disabled={readOnly}
+            disabled={isLocked(field.field_key)}
             multiline={field.field_type === 'textarea'}
             minRows={field.field_type === 'textarea' ? 3 : undefined}
             fullWidth
