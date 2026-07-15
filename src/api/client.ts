@@ -127,6 +127,7 @@ export const api = {
       `/projects/${id}/records`,
       { method: 'POST', body: JSON.stringify({ values }) },
       'Saving record…',
+      60_000,
     ),
   updateRecord: (id: string, recordId: string, values: Record<string, unknown>) =>
     request<RecordRow>(

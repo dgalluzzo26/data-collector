@@ -8,6 +8,13 @@ from backend.models import ProjectRole
 _ROLE_RANK = {"reader": 1, "editor": 2, "admin": 3}
 
 
+def assert_role(role: ProjectRole | None, minimum: ProjectRole) -> None:
+    if not role:
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    if _ROLE_RANK[role] < _ROLE_RANK[minimum]:
+        raise HTTPException(status_code=403, detail=f"Requires {minimum} role")
+
+
 def require_role(project_id: str, request: Request, minimum: ProjectRole) -> tuple[str, ProjectRole]:
     email = auth.get_user_email(request)
     role = repository.get_member_role(project_id, email)

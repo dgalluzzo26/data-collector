@@ -12,7 +12,8 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { api, ApiValidationError } from '../../api/client';
-import type { FieldDefinition, ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
+import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
+import type { ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
 import { validateRecordValues } from '../../lib/recordValidation';
 import BusyButton from '../common/BusyButton';
 import DynamicForm from './DynamicForm';
@@ -47,7 +48,10 @@ function formatAuditTime(iso: string): string {
 }
 
 export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
-  const [publishedFields, setPublishedFields] = useState<FieldDefinition[]>([]);
+  const publishedFields = useMemo(
+    () => selectPublishedFields(project).sort((a, b) => a.sort_order - b.sort_order),
+    [project.fields, project.schema_version],
+  );
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -62,31 +66,35 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
-  const loadPublishedFields = useCallback(async () => {
-    const fields = await api.listPublishedFields(project.project_id);
-    setPublishedFields(fields.sort((a, b) => a.sort_order - b.sort_order));
-  }, [project.project_id]);
-
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows] = await Promise.all([
-        api.listRecords(project.project_id),
-        loadPublishedFields(),
-      ]);
+      const rows = await api.listRecords(project.project_id);
       setRecords(rows);
     } finally {
       setLoading(false);
     }
-  }, [project.project_id, loadPublishedFields]);
+  }, [project.project_id]);
 
   useEffect(() => {
-    if (project.status === 'published') {
-      void refresh();
-    } else {
+    if (project.status !== 'published') {
       setLoading(false);
+      return;
     }
-  }, [project.status, project.schema_version, refresh]);
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const rows = await api.listRecords(project.project_id);
+        if (!cancelled) setRecords(rows);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project.project_id, project.status, project.schema_version]);
 
   useEffect(() => {
     if (!editing) {

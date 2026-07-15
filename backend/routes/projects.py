@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend import audit_repository, config, repository
-from backend import lookup_repository
+from backend import auth, lookup_repository
 from backend.csv_util import parse_records_csv, records_to_csv
-from backend.deps import project_to_summary, require_role
+from backend.deps import assert_role, project_to_summary, require_role
+from backend.sql_util import request_connection
 from backend.validation import build_lookup_allowed, validate_record_values
+from backend.timing import track_request
 from backend.models import (
     AddMemberRequest,
     CreateProjectRequest,
@@ -296,26 +297,83 @@ def _validate_record_values(project_id: str, fields, values: dict) -> None:
 
 
 @router.get("/{project_id}/records", response_model=list[RecordRow])
-def list_records(project_id: str, request: Request):
-    require_role(project_id, request, "reader")
-    project = repository.get_project(project_id)
-    if not project or project["status"] != "published":
-        return []
-    fields = repository.list_fields(project_id, published_only=True)
-    return [RecordRow(**row) for row in repository.list_records(project, fields)]
+def list_records(project_id: str, request: Request, response: Response):
+    with track_request("records.list") as timer:
+        with request_connection():
+            email = auth.get_user_email(request)
+            project, role = repository.get_project_with_member(project_id, email)
+            timer.mark("auth_project_ms")
+            assert_role(role, "reader")
+            if not project or project["status"] != "published":
+                timer.set_extra(project_id=project_id, row_count=0, storage_type=None)
+                result: list[RecordRow] = []
+            else:
+                fields = repository.list_fields(
+                    project_id,
+                    published_only=True,
+                    project=project,
+                )
+                timer.mark("load_fields_ms")
+                rows = repository.list_records(project, fields)
+                timer.mark("list_records_ms")
+                result = [RecordRow(**row) for row in rows]
+                timer.mark("serialize_ms")
+                timer.set_extra(
+                    project_id=project_id,
+                    row_count=len(rows),
+                    storage_type=project.get("storage_type"),
+                    field_count=len(fields),
+                )
+    response.headers["Server-Timing"] = timer.server_timing_header()
+    return result
 
 
 @router.post("/{project_id}/records", response_model=RecordRow, status_code=201)
-def create_record(project_id: str, body: CreateRecordRequest, request: Request):
-    user, _ = require_role(project_id, request, "editor")
-    project = repository.get_project(project_id)
-    if not project or project["status"] != "published":
-        raise HTTPException(status_code=400, detail="Project must be published before adding records")
-    fields = repository.list_fields(project_id, published_only=True)
-    _validate_record_values(project_id, fields, body.values)
-    row = repository.create_record(project, fields, body.values, user)
-    audit_repository.log_record_created(project_id, row["record_id"], body.values, changed_by=user)
-    return RecordRow(**row)
+def create_record(project_id: str, body: CreateRecordRequest, request: Request, response: Response):
+    with track_request("records.create") as timer:
+        with request_connection():
+            email = auth.get_user_email(request)
+            project, role = repository.get_project_with_member(project_id, email)
+            timer.mark("auth_project_ms")
+            assert_role(role, "editor")
+            if not project or project["status"] != "published":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Project must be published before adding records",
+                )
+            fields = repository.list_fields(
+                project_id,
+                published_only=True,
+                project=project,
+            )
+            timer.mark("load_fields_ms")
+            lookup_allowed = build_lookup_allowed(fields, project_id)
+            errors = validate_record_values(
+                fields,
+                body.values,
+                lookup_allowed=lookup_allowed,
+            )
+            timer.mark("validate_ms")
+            if errors:
+                raise HTTPException(status_code=422, detail={"field_errors": errors})
+            row = repository.create_record(project, fields, body.values, email)
+            timer.mark("create_record_ms")
+            audit_repository.log_record_created(
+                project_id,
+                row["record_id"],
+                body.values,
+                changed_by=email,
+            )
+            timer.mark("audit_ms")
+            timer.set_extra(
+                project_id=project_id,
+                storage_type=project.get("storage_type"),
+                field_count=len(fields),
+                value_count=len(body.values),
+            )
+            result = RecordRow(**row)
+    response.headers["Server-Timing"] = timer.server_timing_header()
+    return result
 
 
 @router.patch("/{project_id}/records/{record_id}", response_model=RecordRow)

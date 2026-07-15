@@ -30,6 +30,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+VENV_PYTHON = ROOT / ".venv" / "bin" / "python3"
+
+
+def _in_project_venv() -> bool:
+    venv_root = (ROOT / ".venv").resolve()
+    try:
+        return Path(sys.prefix).resolve() == venv_root
+    except OSError:
+        return False
+
+
+def _reexec_in_venv_if_needed() -> None:
+    """Use project .venv when system python lacks databricks-sql-connector."""
+    if not VENV_PYTHON.is_file() or _in_project_venv():
+        return
+    try:
+        import databricks.sql  # noqa: F401
+        return
+    except ImportError:
+        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+_reexec_in_venv_if_needed()
+
 try:
     from dotenv import load_dotenv
 
@@ -52,7 +76,7 @@ def _check_dependencies() -> None:
             "Missing Python packages. Install into a venv, then re-run:\n"
             "  python3 -m venv .venv\n"
             "  PIP_CONFIG_FILE=pip.conf .venv/bin/pip install -r requirements.txt\n"
-            "  ./scripts/setup.sh --host ... --token ... --warehouse-id ...\n"
+            "  ./scripts/setup.sh\n"
             "\n"
             "Or: .venv/bin/python3 scripts/setup.py ...",
             file=sys.stderr,

@@ -63,6 +63,26 @@ def get_project(project_id: str) -> Optional[dict[str, Any]]:
     return fetchone(f"SELECT * FROM {_table('projects')} WHERE project_id = ?", (project_id,))
 
 
+def get_project_with_member(
+    project_id: str,
+    user_email: str,
+) -> tuple[Optional[dict[str, Any]], Optional[ProjectRole]]:
+    row = fetchone(
+        f"""
+        SELECT p.*, m.role AS member_role
+        FROM {_table("projects")} p
+        INNER JOIN {_table("project_members")} m
+          ON p.project_id = m.project_id
+        WHERE p.project_id = ? AND m.user_email = ?
+        """,
+        (project_id, user_email.lower()),
+    )
+    if not row:
+        return None, None
+    role = row.pop("member_role")
+    return row, role
+
+
 def get_member_role(project_id: str, user_email: str) -> Optional[ProjectRole]:
     row = fetchone(
         f"SELECT role FROM {_table('project_members')} WHERE project_id = ? AND user_email = ?",
@@ -79,8 +99,14 @@ def list_members(project_id: str) -> list[ProjectMember]:
     return [ProjectMember(**row) for row in rows]
 
 
-def list_fields(project_id: str, *, published_only: bool = False) -> list[FieldDefinition]:
-    project = get_project(project_id)
+def list_fields(
+    project_id: str,
+    *,
+    published_only: bool = False,
+    project: Optional[dict[str, Any]] = None,
+) -> list[FieldDefinition]:
+    if project is None:
+        project = get_project(project_id)
     if not project:
         return []
 

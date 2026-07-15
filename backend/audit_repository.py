@@ -26,6 +26,37 @@ def _serialize(value: Any) -> Optional[str]:
     return str(value)
 
 
+def _insert_audit_rows(rows: list[tuple[Any, ...]]) -> None:
+    if not rows:
+        return
+    value_groups = ", ".join("(?, ?, ?, ?, ?, ?, ?)" for _ in rows)
+    sql = f"""
+        INSERT INTO {_table()} (
+            project_id, record_id, field_key, old_value, new_value, changed_by, changed_at
+        ) VALUES {value_groups}
+    """
+    params = [value for row in rows for value in row]
+    execute(sql, params)
+
+
+def _build_audit_rows(
+    project_id: str,
+    record_id: str,
+    changes: list[tuple[Optional[str], Any, Any]],
+    *,
+    changed_by: str,
+    changed_at: datetime,
+) -> list[tuple[Any, ...]]:
+    rows: list[tuple[Any, ...]] = []
+    for field_key, old_value, new_value in changes:
+        old_s = _serialize(old_value)
+        new_s = _serialize(new_value)
+        if old_s == new_s:
+            continue
+        rows.append((project_id, record_id, field_key, old_s, new_s, changed_by, changed_at))
+    return rows
+
+
 def log_field_change(
     project_id: str,
     record_id: str,
@@ -35,18 +66,15 @@ def log_field_change(
     new_value: Any,
     changed_by: str,
 ) -> None:
-    old_s = _serialize(old_value)
-    new_s = _serialize(new_value)
-    if old_s == new_s:
-        return
-    execute(
-        f"""
-        INSERT INTO {_table()} (
-            project_id, record_id, field_key, old_value, new_value, changed_by, changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (project_id, record_id, field_key, old_s, new_s, changed_by, _now()),
+    changed_at = _now()
+    rows = _build_audit_rows(
+        project_id,
+        record_id,
+        [(field_key, old_value, new_value)],
+        changed_by=changed_by,
+        changed_at=changed_at,
     )
+    _insert_audit_rows(rows)
 
 
 def log_record_created(
@@ -56,17 +84,16 @@ def log_record_created(
     *,
     changed_by: str,
 ) -> None:
-    for key, val in values.items():
-        if _serialize(val) is None:
-            continue
-        log_field_change(
-            project_id,
-            record_id,
-            field_key=key,
-            old_value=None,
-            new_value=val,
-            changed_by=changed_by,
-        )
+    changed_at = _now()
+    changes = [(key, None, val) for key, val in values.items()]
+    rows = _build_audit_rows(
+        project_id,
+        record_id,
+        changes,
+        changed_by=changed_by,
+        changed_at=changed_at,
+    )
+    _insert_audit_rows(rows)
 
 
 def log_record_updated(
@@ -77,16 +104,17 @@ def log_record_updated(
     *,
     changed_by: str,
 ) -> None:
+    changed_at = _now()
     keys = set(old_values) | set(new_values)
-    for key in keys:
-        log_field_change(
-            project_id,
-            record_id,
-            field_key=key,
-            old_value=old_values.get(key),
-            new_value=new_values.get(key),
-            changed_by=changed_by,
-        )
+    changes = [(key, old_values.get(key), new_values.get(key)) for key in keys]
+    rows = _build_audit_rows(
+        project_id,
+        record_id,
+        changes,
+        changed_by=changed_by,
+        changed_at=changed_at,
+    )
+    _insert_audit_rows(rows)
 
 
 def log_record_deleted(
@@ -96,15 +124,16 @@ def log_record_deleted(
     *,
     changed_by: str,
 ) -> None:
-    for key, val in values.items():
-        log_field_change(
-            project_id,
-            record_id,
-            field_key=key,
-            old_value=val,
-            new_value=None,
-            changed_by=changed_by,
-        )
+    changed_at = _now()
+    changes = [(key, val, None) for key, val in values.items()]
+    rows = _build_audit_rows(
+        project_id,
+        record_id,
+        changes,
+        changed_by=changed_by,
+        changed_at=changed_at,
+    )
+    _insert_audit_rows(rows)
 
 
 def list_record_audit(project_id: str, record_id: str) -> list[dict[str, Any]]:

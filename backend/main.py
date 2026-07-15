@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.routes import ai, genie, health, lookups, me, projects
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Data Collector API")
 

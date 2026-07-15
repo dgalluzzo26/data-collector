@@ -33,7 +33,6 @@ export function useProject(projectId: string | undefined) {
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
-    setLoading(true);
     setError(null);
     try {
       setProject(await api.getProject(projectId));
@@ -45,7 +44,8 @@ export function useProject(projectId: string | undefined) {
   }, [projectId]);
 
   useEffect(() => {
-    refresh();
+    setLoading(true);
+    void refresh();
   }, [refresh]);
 
   return { project, loading, error, refresh };

@@ -46,12 +46,6 @@ export default function ProjectWorkspace() {
     return designerBaseline(project, draftFields);
   }, [project, draftFields]);
 
-  useEffect(() => {
-    if (tab === 'records' && projectId) {
-      void refresh();
-    }
-  }, [tab, projectId, refresh]);
-
   if (loading) {
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 4 }}>
