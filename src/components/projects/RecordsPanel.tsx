@@ -21,6 +21,7 @@ import DynamicForm from './DynamicForm';
 interface RecordsPanelProps {
   project: ProjectDetail;
   canEdit: boolean;
+  onChanged?: () => void;
 }
 
 function formatAuditValue(value: string | null | undefined): string {
@@ -47,11 +48,14 @@ function formatAuditTime(iso: string): string {
   }
 }
 
-export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
+export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPanelProps) {
   const publishedFields = useMemo(
     () => selectPublishedFields(project).sort((a, b) => a.sort_order - b.sort_order),
     [project.fields, project.schema_version],
   );
+  const isStagedSync =
+    project.storage_type === 'uc_delta' && project.record_sync_mode === 'staged';
+  const pendingChanges = project.staged_change_count ?? 0;
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -64,17 +68,26 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
   const [auditLoading, setAuditLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [recordsTruncated, setRecordsTruncated] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
+
+  const recordPageLimit = 500;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await api.listRecords(project.project_id);
+      const rows = await api.listRecords(project.project_id, { limit: recordPageLimit });
       setRecords(rows);
+      setRecordsTruncated(rows.length >= recordPageLimit);
     } finally {
       setLoading(false);
     }
   }, [project.project_id]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refresh(), onChanged?.() ?? Promise.resolve()]);
+  }, [refresh, onChanged]);
 
   useEffect(() => {
     if (project.status !== 'published') {
@@ -85,8 +98,11 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     (async () => {
       setLoading(true);
       try {
-        const rows = await api.listRecords(project.project_id);
-        if (!cancelled) setRecords(rows);
+        const rows = await api.listRecords(project.project_id, { limit: recordPageLimit });
+        if (!cancelled) {
+          setRecords(rows);
+          setRecordsTruncated(rows.length >= recordPageLimit);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -116,6 +132,11 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     };
   }, [editing, project.project_id]);
 
+  const lockedFields = useMemo(() => {
+    if (!editing || !project.record_key_column) return undefined;
+    return new Set([project.record_key_column]);
+  }, [editing, project.record_key_column]);
+
   const gridRows = useMemo(
     () =>
       records.map((r) => ({
@@ -140,12 +161,12 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
           }
           return current;
         });
-        await refresh();
+        await refreshAll();
       } finally {
         setDeleting(false);
       }
     },
-    [project.project_id, refresh],
+    [project.project_id, refreshAll],
   );
 
   const columns: GridColDef[] = useMemo(() => {
@@ -213,6 +234,23 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     await api.exportRecords(project.project_id, `${project.slug}_records.csv`);
   };
 
+  const syncToUc = async () => {
+    if (!window.confirm(`Apply ${pendingChanges} staged change(s) to Unity Catalog?`)) return;
+    setSyncing(true);
+    setImportMessage(null);
+    try {
+      const result = await api.syncRecordsToUc(project.project_id);
+      setImportMessage(
+        `Synced ${result.synced} change${result.synced === 1 ? '' : 's'} to Unity Catalog (${result.inserted} inserted, ${result.updated} updated, ${result.deleted} deleted).`,
+      );
+      await refreshAll();
+    } catch (err) {
+      setImportMessage(err instanceof Error ? err.message : 'Sync to Unity Catalog failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const importCsv = async (file: File) => {
     setImporting(true);
     setImportMessage(null);
@@ -232,7 +270,7 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
           `Imported ${result.created}; ${failedCount} row${failedCount === 1 ? '' : 's'} failed (${detail}${suffix}).`,
         );
       }
-      await refresh();
+      await refreshAll();
     } catch (err) {
       setImportMessage(err instanceof Error ? err.message : 'CSV import failed');
     } finally {
@@ -270,10 +308,17 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
       setDrawerOpen(false);
       setFieldErrors({});
       setAuditLog([]);
-      await refresh();
+      await refreshAll();
     } catch (err) {
       if (err instanceof ApiValidationError) {
         setFieldErrors(err.fieldErrors);
+      } else if (err instanceof Error) {
+        const key = project.record_key_column;
+        if (key && !editing) {
+          setFieldErrors({ [key]: err.message });
+        } else {
+          setImportMessage(err.message);
+        }
       } else {
         throw err;
       }
@@ -305,6 +350,19 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
           >
             Export CSV
           </Button>
+          {canEdit && isStagedSync && (
+            <BusyButton
+              variant="contained"
+              color="secondary"
+              size="small"
+              onClick={() => void syncToUc()}
+              busy={syncing}
+              busyLabel="Syncing…"
+              disabled={pendingChanges === 0}
+            >
+              Sync to UC{pendingChanges > 0 ? ` (${pendingChanges})` : ''}
+            </BusyButton>
+          )}
           {canEdit && (
             <>
               <input
@@ -335,10 +393,25 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
         </Box>
       </Box>
 
+      {isStagedSync && (
+        <Alert severity="info">
+          Changes are staged locally and are not written to Unity Catalog until you click Sync to UC.
+          {pendingChanges > 0
+            ? ` ${pendingChanges} pending change${pendingChanges === 1 ? '' : 's'}.`
+            : ' No pending changes.'}
+        </Alert>
+      )}
+
       {importMessage && (
         <Alert severity={importMessage.includes('failed') ? 'warning' : 'success'} onClose={() => setImportMessage(null)}>
           {importMessage}
         </Alert>
+      )}
+
+      {recordsTruncated && (
+        <Typography variant="body2" color="text.secondary">
+          Showing the first {recordPageLimit} records. Export CSV for a larger extract (up to 5,000 rows).
+        </Typography>
       )}
 
       <Box sx={{ minHeight: 480 }}>
@@ -372,6 +445,7 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
             setFieldErrors({});
           }}
           readOnly={!canEdit}
+          lockedFields={lockedFields}
           errors={fieldErrors}
         />
         {editing && (

@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import FormControl from '@mui/material/FormControl';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormHelperText from '@mui/material/FormHelperText';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
 import { hasSyncLocation, showGenieTab } from '../../lib/genie';
-import type { AppConfig, ProjectDetail, StorageType } from '../../types';
+import type { AppConfig, ProjectDetail, RecordSyncMode, StorageType } from '../../types';
 import BusyButton from '../common/BusyButton';
 
 interface StorageSettingsPanelProps {
@@ -23,16 +28,21 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
   const [syncCatalog, setSyncCatalog] = useState(project.sync_catalog ?? '');
   const [syncSchema, setSyncSchema] = useState(project.sync_schema ?? '');
   const [syncTable, setSyncTable] = useState(project.sync_table ?? '');
+  const [recordSyncMode, setRecordSyncMode] = useState<RecordSyncMode | ''>(
+    project.record_sync_mode ?? '',
+  );
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lakebaseConfigured, setLakebaseConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingSync, setSavingSync] = useState(false);
+  const [savingSyncMode, setSavingSyncMode] = useState(false);
   const [genieSyncing, setGenieSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isDraft = project.status === 'draft';
   const isLakebase = storageType === 'lakebase';
+  const isUc = (isDraft ? storageType : project.storage_type) === 'uc_delta';
 
   useEffect(() => {
     setStorageType(project.storage_type);
@@ -42,6 +52,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     setSyncCatalog(project.sync_catalog ?? '');
     setSyncSchema(project.sync_schema ?? '');
     setSyncTable(project.sync_table ?? '');
+    setRecordSyncMode(project.record_sync_mode ?? '');
   }, [
     project.storage_type,
     project.target_catalog,
@@ -50,6 +61,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     project.sync_catalog,
     project.sync_schema,
     project.sync_table,
+    project.record_sync_mode,
   ]);
 
   useEffect(() => {
@@ -107,6 +119,22 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSavingSync(false);
+    }
+  };
+
+  const saveRecordSyncMode = async () => {
+    if (!recordSyncMode) return;
+    setSavingSyncMode(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await api.updateProject(project.project_id, { record_sync_mode: recordSyncMode });
+      setMessage('Record sync mode saved.');
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSavingSyncMode(false);
     }
   };
 
@@ -225,6 +253,71 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
           <BusyButton variant="contained" onClick={save} busy={saving} busyLabel="Saving…">
             Save storage location
           </BusyButton>
+        </Box>
+      )}
+
+      {isUc && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Unity Catalog record updates
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Choose how editor changes are written to the backing UC table. This is required before
+            you can publish.
+          </Typography>
+          {!isDraft && project.record_sync_mode && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Mode locked after publish:{' '}
+              <strong>
+                {project.record_sync_mode === 'immediate'
+                  ? 'Write directly to Unity Catalog'
+                  : 'Stage locally, then bulk sync'}
+              </strong>
+              {project.staged_change_count ? ` (${project.staged_change_count} pending)` : ''}
+            </Alert>
+          )}
+          {isDraft && !recordSyncMode && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              Select a record update mode and save before publishing.
+            </Alert>
+          )}
+          <FormControl component="fieldset" disabled={!isDraft} sx={{ width: '100%' }}>
+            <RadioGroup
+              value={recordSyncMode}
+              onChange={(e) => setRecordSyncMode(e.target.value as RecordSyncMode)}
+            >
+              <FormControlLabel
+                value="immediate"
+                control={<Radio />}
+                label="Write changes directly to Unity Catalog"
+              />
+              <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
+                Each create, edit, or delete updates the UC table immediately.
+              </FormHelperText>
+              <FormControlLabel
+                value="staged"
+                control={<Radio />}
+                label="Stage changes locally, then bulk sync to UC"
+              />
+              <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
+                Editors work against local staged changes. An admin or editor syncs them to UC in one
+                batch from the Records tab.
+              </FormHelperText>
+            </RadioGroup>
+          </FormControl>
+          {isDraft && (
+            <Box sx={{ mt: 2 }}>
+              <BusyButton
+                variant="contained"
+                onClick={saveRecordSyncMode}
+                busy={savingSyncMode}
+                busyLabel="Saving…"
+                disabled={!recordSyncMode}
+              >
+                Save record sync mode
+              </BusyButton>
+            </Box>
+          )}
         </Box>
       )}
 

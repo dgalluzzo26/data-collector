@@ -1,16 +1,38 @@
 from pathlib import Path
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.routes import ai, genie, health, lookups, me, projects
+from backend.routes import ai, genie, health, lookups, me, projects, uc
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Data Collector API")
+
+def _run_startup_migrations() -> None:
+    try:
+        from backend import config
+        from backend.db import get_connection
+        from backend.provisioning import run_migrations
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                run_migrations(cur, config.CATALOG, config.SCHEMA)
+    except Exception as exc:
+        logger.warning("Startup schema migrations skipped: %s", exc)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _run_startup_migrations()
+    yield
+
+
+app = FastAPI(title="Data Collector API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,6 +48,7 @@ app.include_router(projects.router, prefix="/api")
 app.include_router(lookups.router, prefix="/api")
 app.include_router(genie.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(uc.router, prefix="/api")
 
 dist_dir = Path(__file__).resolve().parent.parent / "dist"
 if dist_dir.exists():

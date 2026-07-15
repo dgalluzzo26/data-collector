@@ -77,6 +77,13 @@ export default function ProjectWorkspace() {
   };
 
   const publish = async () => {
+    if (project.storage_type === 'uc_delta' && !project.record_sync_mode) {
+      setMessage(
+        'Choose how record changes sync to Unity Catalog in Settings before publishing.',
+      );
+      setTab('settings');
+      return;
+    }
     setPublishing(true);
     setMessage(null);
     try {
@@ -205,7 +212,9 @@ export default function ProjectWorkspace() {
         <LookupsPanel project={project} isAdmin={!!isAdmin} onChanged={refresh} />
       )}
 
-      {tab === 'records' && <RecordsPanel project={project} canEdit={!!canEdit} />}
+      {tab === 'records' && (
+        <RecordsPanel project={project} canEdit={!!canEdit} onChanged={refresh} />
+      )}
       {tab === 'genie' && showGenieTabForProject && (
         <GenieAskPanel project={project} isAdmin={!!isAdmin} />
       )}

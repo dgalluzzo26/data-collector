@@ -1,6 +1,8 @@
 export type ProjectRole = 'admin' | 'editor' | 'reader';
 export type ProjectStatus = 'draft' | 'published' | 'archived';
 export type StorageType = 'uc_delta' | 'lakebase';
+export type StorageMode = 'managed' | 'existing_uc';
+export type RecordSyncMode = 'immediate' | 'staged';
 export type FieldType =
   | 'text'
   | 'textarea'
@@ -17,7 +19,7 @@ export type FieldType =
 export interface LookupColumn {
   key: string;
   label: string;
-  type?: 'text' | 'number';
+  type?: 'text' | 'number' | 'date' | 'datetime' | 'boolean';
 }
 
 export interface LookupTable {
@@ -86,6 +88,10 @@ export interface ProjectDetail extends ProjectSummary {
   target_catalog?: string | null;
   target_schema?: string | null;
   target_table?: string | null;
+  storage_mode?: StorageMode;
+  record_key_column?: string | null;
+  record_sync_mode?: RecordSyncMode | null;
+  staged_change_count?: number;
   sync_catalog?: string | null;
   sync_schema?: string | null;
   sync_table?: string | null;
@@ -142,16 +148,27 @@ export interface ImportRecordsResult {
   failed: Array<{ row: number; field_errors: Record<string, string> }>;
 }
 
+export interface SyncStagedRecordsResult {
+  synced: number;
+  inserted: number;
+  updated: number;
+  deleted: number;
+}
+
 export interface CreateProjectPayload {
   name: string;
   description?: string;
   storage_type?: StorageType;
+  storage_mode?: StorageMode;
+  record_key_column?: string;
+  record_sync_mode?: RecordSyncMode;
   target_catalog?: string;
   target_schema?: string;
   target_table?: string;
   sync_catalog?: string;
   sync_schema?: string;
   sync_table?: string;
+  seed_fields?: FieldDefinition[];
 }
 
 export interface LookupProposal {

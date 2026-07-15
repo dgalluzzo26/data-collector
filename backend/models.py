@@ -11,6 +11,8 @@ ProjectRole = Literal["admin", "editor", "reader"]
 ProjectStatus = Literal["draft", "published", "archived"]
 GenieStatus = Literal["disabled", "pending", "ready", "error"]
 StorageType = Literal["uc_delta", "lakebase"]
+StorageMode = Literal["managed", "existing_uc"]
+RecordSyncMode = Literal["immediate", "staged"]
 FieldType = Literal[
     "text",
     "textarea",
@@ -68,6 +70,10 @@ class ProjectDetail(ProjectSummary):
     target_catalog: Optional[str] = None
     target_schema: Optional[str] = None
     target_table: Optional[str] = None
+    storage_mode: StorageMode = "managed"
+    record_key_column: Optional[str] = None
+    record_sync_mode: Optional[RecordSyncMode] = None
+    staged_change_count: int = 0
     sync_catalog: Optional[str] = None
     sync_schema: Optional[str] = None
     sync_table: Optional[str] = None
@@ -110,9 +116,12 @@ class CreateProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
     storage_type: StorageType = "uc_delta"
+    storage_mode: StorageMode = "managed"
+    record_key_column: Optional[str] = Field(default=None, max_length=128)
     target_catalog: Optional[str] = None
     target_schema: Optional[str] = None
     target_table: Optional[str] = None
+    seed_fields: Optional[list[FieldDefinition]] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -126,6 +135,7 @@ class UpdateProjectRequest(BaseModel):
     sync_catalog: Optional[str] = Field(default=None, max_length=128)
     sync_schema: Optional[str] = Field(default=None, max_length=128)
     sync_table: Optional[str] = Field(default=None, max_length=128)
+    record_sync_mode: Optional[RecordSyncMode] = None
 
 
 class AddMemberRequest(BaseModel):
@@ -177,10 +187,17 @@ class ImportRecordsResult(BaseModel):
     failed: list[ImportRecordError] = Field(default_factory=list)
 
 
+class SyncStagedRecordsResult(BaseModel):
+    synced: int
+    inserted: int
+    updated: int
+    deleted: int
+
+
 class LookupColumn(BaseModel):
     key: str
     label: str
-    type: Literal["text", "number"] = "text"
+    type: Literal["text", "number", "date", "datetime", "boolean"] = "text"
 
 
 class LookupTable(BaseModel):
