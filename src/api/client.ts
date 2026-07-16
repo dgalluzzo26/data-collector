@@ -139,8 +139,12 @@ export const api = {
       { method: 'PUT', body: JSON.stringify(body) },
       'Saving branding…',
     ),
-  resetBranding: () =>
-    request<AppBranding>('/branding/reset', { method: 'POST' }, 'Resetting branding…'),
+  resetBranding: (preset = 'databricks') =>
+    request<AppBranding>(
+      `/branding/reset?preset=${encodeURIComponent(preset)}`,
+      { method: 'POST' },
+      'Applying palette…',
+    ),
 
   listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading collections…'),
   createProject: (body: CreateProjectPayload) =>

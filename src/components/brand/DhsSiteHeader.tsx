@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import PersonIcon from '@mui/icons-material/Person';
+import { defaultBrandLogos } from '../../lib/brandingLogos';
 
 interface DhsSiteHeaderProps {
   appTitle?: string;
@@ -14,20 +15,22 @@ interface DhsSiteHeaderProps {
 
 export default function DhsSiteHeader({
   appTitle = 'Data Collector',
-  agencyName = 'U.S. Department of Homeland Security',
+  agencyName = 'Databricks',
   logoUrl = null,
   tagline,
   showSeal = false,
   actions,
   userLabel,
 }: DhsSiteHeaderProps) {
+  const fallbackLogo = defaultBrandLogos(agencyName).icon;
+
   return (
     <header className="dhs-site-header">
       <div className="dhs-site-header__inner">
         <RouterLink className="dhs-site-header__logo-link" to="/" title={`${agencyName} — ${appTitle}`}>
           {(showSeal || logoUrl) && (
             <img
-              src={logoUrl || '/images/dhs-logo.svg'}
+              src={logoUrl || fallbackLogo}
               alt=""
               className="dhs-site-header__seal"
             />

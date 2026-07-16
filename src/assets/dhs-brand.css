@@ -1,30 +1,30 @@
 /**
- * DHS.gov-inspired brand tokens (colors from official USWDS/DHS assets).
- * @see https://www.dhs.gov/
+ * Static brand fallbacks (Databricks) — overridden at runtime by BrandingProvider.
+ * @see https://www.databricks.com/
  */
 :root {
-  --app-chrome-bg: #f8f9fb;
-  --dhs-navy: #0c2340;
-  --dhs-navy-mid: #112e51;
-  --dhs-blue: #005288;
-  --dhs-blue-light: #0078ae;
-  --dhs-red: #c41230;
-  --dhs-green: #5e9732;
-  --dhs-gray-90: #1b1b1b;
-  --dhs-gray-60: #5c5c5c;
-  --dhs-gray-10: #f0f0f0;
-  --dhs-header-bg: linear-gradient(180deg, #0c2340 0%, #112e51 100%);
-  --dhs-sidebar-bg: linear-gradient(165deg, #0c2340 0%, #112e51 48%, #0c2a46 100%);
-  --dhs-content-hero-bg: linear-gradient(135deg, #0c2340 0%, #005288 55%, #0078ae 100%);
+  --app-chrome-bg: #f9f7f4;
+  --dhs-navy: #0b2026;
+  --dhs-navy-mid: #1b3139;
+  --dhs-blue: #ff3621;
+  --dhs-blue-light: #ff3621;
+  --dhs-red: #1b3139;
+  --dhs-green: #468254;
+  --dhs-gray-90: #1b3139;
+  --dhs-gray-60: #90a5b1;
+  --dhs-gray-10: #eeede9;
+  --dhs-header-bg: linear-gradient(180deg, #0b2026 0%, #1b3139 100%);
+  --dhs-sidebar-bg: linear-gradient(165deg, #0b2026 0%, #1b3139 48%, #0b2026 100%);
+  --dhs-content-hero-bg: linear-gradient(135deg, #0b2026 0%, #ff3621 55%, #ff5c4d 100%);
 
   /* Content-area tokens (light default) */
-  --p-surface-ground: #f8f9fb;
+  --p-surface-ground: #f9f7f4;
   --p-surface-0: #ffffff;
-  --p-surface-200: #e5e7eb;
-  --p-surface-border: #e2e8f0;
-  --p-text-color: #1b1b1b;
-  --p-text-muted-color: #5c5c5c;
-  --p-primary-color: #005288;
+  --p-surface-200: #eeede9;
+  --p-surface-border: #e5e5e5;
+  --p-text-color: #1b3139;
+  --p-text-muted-color: #90a5b1;
+  --p-primary-color: #ff3621;
 }
 
 .dhs-site-header {

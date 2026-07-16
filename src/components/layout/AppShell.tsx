@@ -19,6 +19,7 @@ import ApiIcon from '@mui/icons-material/Api';
 import DhsSiteHeader from '../brand/DhsSiteHeader';
 import StatusBar from '../common/StatusBar';
 import { useBranding } from '../../branding/BrandingProvider';
+import { defaultBrandLogos, isDhsAgency } from '../../lib/brandingLogos';
 import { useContentTheme } from '../../hooks/useContentTheme';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import './AppShell.css';
@@ -93,6 +94,7 @@ export default function AppShell() {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
   const { branding } = useBranding();
+  const brandLogos = defaultBrandLogos(branding.agency_name);
   const { isContentDark, toggleContentTheme } = useContentTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -180,9 +182,9 @@ export default function AppShell() {
                   style={sidebarCollapsed ? { width: 40, height: 40, objectFit: 'contain' } : { maxHeight: 40, width: 'auto' }}
                 />
               ) : sidebarCollapsed ? (
-                <img src="/images/dhs-logo.svg" alt={branding.agency_name} className="brand-seal" width={40} height={40} />
+                <img src={brandLogos.icon} alt={branding.agency_name} className="brand-seal" width={40} height={40} />
               ) : (
-                <img src="/images/dhs-wordmark.svg" alt={branding.agency_name} className="brand-wordmark" />
+                <img src={brandLogos.wordmark} alt={branding.agency_name} className="brand-wordmark" />
               )}
             </button>
             <div className="sidebar-header-actions">
@@ -220,9 +222,15 @@ export default function AppShell() {
               {isContentDark ? <Brightness7Icon fontSize="small" /> : <Brightness4Icon fontSize="small" />}
               {!sidebarCollapsed && <span>{isContentDark ? 'Light mode' : 'Dark mode'}</span>}
             </button>
-            {!sidebarCollapsed && branding.agency_name === 'U.S. Department of Homeland Security' && (
+            {!sidebarCollapsed && isDhsAgency(branding.agency_name) && (
               <a href="https://www.dhs.gov/" target="_blank" rel="noopener noreferrer" className="dhs-footer-link">
                 DHS.gov
+                <OpenInNewIcon sx={{ fontSize: '0.65rem' }} />
+              </a>
+            )}
+            {!sidebarCollapsed && branding.agency_name === 'Databricks' && (
+              <a href="https://www.databricks.com/" target="_blank" rel="noopener noreferrer" className="dhs-footer-link">
+                databricks.com
                 <OpenInNewIcon sx={{ fontSize: '0.65rem' }} />
               </a>
             )}

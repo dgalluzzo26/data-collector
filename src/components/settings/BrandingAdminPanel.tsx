@@ -1,16 +1,27 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Collapse from '@mui/material/Collapse';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
+import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useBranding } from '../../branding/BrandingProvider';
+import { applyBrandingToDocument } from '../../lib/branding';
+import { defaultBrandLogos } from '../../lib/brandingLogos';
+import {
+  BRANDING_PALETTES,
+  CUSTOM_PALETTE_ID,
+  applyPalettePreset,
+  detectPaletteId,
+} from '../../lib/brandingPresets';
 import type { AppBranding, BrandingChrome, BrandingColorSet } from '../../types';
-import { DEFAULT_BRANDING } from '../../lib/branding';
 
 const MAX_LOGO_BYTES = 500 * 1024;
 
@@ -42,6 +53,25 @@ function ColorField({
           style={{ width: 40, height: 40, border: 'none', background: 'transparent', cursor: 'pointer' }}
         />
       )}
+    </Stack>
+  );
+}
+
+function PaletteSwatch({ colors }: { colors: string[] }) {
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
+      {colors.map((color) => (
+        <Box
+          key={color}
+          sx={{
+            width: 14,
+            height: 14,
+            borderRadius: '2px',
+            bgcolor: color,
+            border: '1px solid rgba(0,0,0,0.12)',
+          }}
+        />
+      ))}
     </Stack>
   );
 }
@@ -133,6 +163,31 @@ export default function BrandingAdminPanel() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const savedBrandingRef = useRef(branding);
+
+  const activePaletteId = detectPaletteId(draft);
+  const defaultLogos = defaultBrandLogos(draft.agency_name);
+
+  useEffect(() => {
+    setDraft(branding);
+    savedBrandingRef.current = branding;
+  }, [branding]);
+
+  useEffect(() => {
+    applyBrandingToDocument(draft);
+    return () => {
+      applyBrandingToDocument(savedBrandingRef.current);
+    };
+  }, [draft]);
+
+  const updateDraftColors = (patch: Partial<Pick<AppBranding, 'chrome' | 'light' | 'dark'>>) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const onPaletteSelect = (presetId: string) => {
+    if (presetId === CUSTOM_PALETTE_ID) return;
+    setDraft((prev) => applyPalettePreset(prev, presetId));
+  };
 
   const onLogoPick = (file: File | null) => {
     if (!file) return;
@@ -155,7 +210,7 @@ export default function BrandingAdminPanel() {
     setError(null);
     setMessage(null);
     try {
-      await updateBranding({
+      const updated = await updateBranding({
         app_title: draft.app_title,
         agency_name: draft.agency_name,
         logo_data_url: draft.logo_data_url,
@@ -164,7 +219,8 @@ export default function BrandingAdminPanel() {
         light: draft.light,
         dark: draft.dark,
       });
-      setMessage('Branding saved. Changes apply for all users on next load.');
+      savedBrandingRef.current = updated;
+      setMessage('Branding saved.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -172,16 +228,18 @@ export default function BrandingAdminPanel() {
     }
   };
 
-  const reset = async () => {
+  const applyAndSavePreset = async (presetId: string) => {
     setSaving(true);
     setError(null);
     setMessage(null);
     try {
-      const restored = await resetBranding();
+      const restored = await resetBranding(presetId);
       setDraft(restored);
-      setMessage('Branding reset to defaults.');
+      savedBrandingRef.current = restored;
+      const label = BRANDING_PALETTES.find((p) => p.id === presetId)?.label ?? presetId;
+      setMessage(`Saved ${label} palette colors.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reset failed');
+      setError(err instanceof Error ? err.message : 'Could not apply palette');
     } finally {
       setSaving(false);
     }
@@ -193,8 +251,8 @@ export default function BrandingAdminPanel() {
         App branding
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Customize the logo, application title, and colors for light and dark mode. Only app
-        administrators can change these settings.
+        Pick a predefined color palette or fine-tune colors manually. Title, agency name, and logo
+        are configured separately and are not changed when you switch palettes.
       </Typography>
 
       {message && (
@@ -209,6 +267,56 @@ export default function BrandingAdminPanel() {
       )}
 
       <Stack spacing={2}>
+        <Box>
+          <FormControl fullWidth size="small">
+            <InputLabel id="branding-palette-label">Color palette</InputLabel>
+            <Select
+              labelId="branding-palette-label"
+              label="Color palette"
+              value={activePaletteId}
+              renderValue={(value) => {
+                if (value === CUSTOM_PALETTE_ID) return 'Custom';
+                return BRANDING_PALETTES.find((p) => p.id === value)?.label ?? value;
+              }}
+              onChange={(e) => onPaletteSelect(String(e.target.value))}
+            >
+              {BRANDING_PALETTES.map((preset) => (
+                <MenuItem key={preset.id} value={preset.id}>
+                  <Box>
+                    <Typography variant="body2">{preset.label}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {preset.description}
+                    </Typography>
+                    <PaletteSwatch
+                      colors={[
+                        preset.light.primary,
+                        preset.light.background,
+                        preset.dark.background,
+                        preset.chrome.header_accent,
+                      ]}
+                    />
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {activePaletteId === CUSTOM_PALETTE_ID && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+              You are using custom colors. Select a preset above to start from a known palette.
+            </Typography>
+          )}
+          {activePaletteId !== CUSTOM_PALETTE_ID && (
+            <Button
+              size="small"
+              sx={{ mt: 1 }}
+              disabled={saving}
+              onClick={() => applyAndSavePreset(activePaletteId)}
+            >
+              Apply &amp; save {BRANDING_PALETTES.find((p) => p.id === activePaletteId)?.label} colors
+            </Button>
+          )}
+        </Box>
+
         <TextField
           label="Application title"
           value={draft.app_title}
@@ -235,7 +343,7 @@ export default function BrandingAdminPanel() {
               />
             ) : (
               <Typography variant="body2" color="text.secondary">
-                Using default DHS wordmark
+                Using {defaultLogos.label}
               </Typography>
             )}
             <input
@@ -261,34 +369,24 @@ export default function BrandingAdminPanel() {
           </Stack>
         </Box>
 
-        <ChromeFields
-          chrome={draft.chrome}
-          onChange={(chrome) => setDraft((p) => ({ ...p, chrome }))}
-        />
+        <ChromeFields chrome={draft.chrome} onChange={(chrome) => updateDraftColors({ chrome })} />
         <ColorSetFields
           title="Light mode colors"
           colors={draft.light}
-          onChange={(light) => setDraft((p) => ({ ...p, light }))}
+          onChange={(light) => updateDraftColors({ light })}
         />
         <ColorSetFields
           title="Dark mode colors"
           colors={draft.dark}
-          onChange={(dark) => setDraft((p) => ({ ...p, dark }))}
+          onChange={(dark) => updateDraftColors({ dark })}
         />
 
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button variant="contained" disabled={saving} onClick={save}>
             Save branding
           </Button>
-          <Button
-            variant="outlined"
-            disabled={saving}
-            onClick={() => setDraft(DEFAULT_BRANDING)}
-          >
+          <Button variant="outlined" disabled={saving} onClick={() => setDraft(branding)}>
             Revert draft
-          </Button>
-          <Button variant="text" color="warning" disabled={saving} onClick={reset}>
-            Reset to defaults
           </Button>
         </Stack>
       </Stack>

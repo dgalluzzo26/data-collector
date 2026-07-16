@@ -1,28 +1,15 @@
 /**
- * Dark styling for main content area only (sidebar/header stay navy).
- * Toggle via `.content-theme-dark` on main content and document.body.
+ * Dark styling for main content area only (sidebar/header use chrome palette).
+ * Color values come from BrandingProvider via CSS variables.
  */
 .content-theme-dark,
 body.content-theme-dark {
   color-scheme: dark;
-  --app-chrome-bg: #0c2340;
-  --p-surface-ground: #0c2340;
-  --p-surface-0: #112e51;
-  --p-surface-50: #0f2844;
-  --p-surface-100: #152a47;
-  --p-surface-200: rgba(255, 255, 255, 0.12);
-  --p-surface-border: rgba(255, 255, 255, 0.14);
-  --p-text-color: rgba(255, 255, 255, 0.96);
-  --p-text-muted-color: rgba(255, 255, 255, 0.76);
-  --p-primary-color: #7dd3fc;
-  --dhs-navy: #ffffff;
-  --dhs-blue: #66b8e8;
-  --dhs-blue-light: #8ecbf0;
   color: var(--p-text-color);
 }
 
 .main-content-inner.content-theme-dark {
-  background: linear-gradient(180deg, #0c2340 0%, #081a30 100%);
+  background: var(--p-content-inner-bg, var(--p-surface-ground));
 }
 
 .content-theme-dark .text-muted,
@@ -35,8 +22,9 @@ body.content-theme-dark a {
   color: var(--dhs-blue-light);
 }
 
-.content-theme-dark .page-title {
-  color: rgba(255, 255, 255, 0.96);
+.content-theme-dark .page-title,
+body.content-theme-dark .page-title {
+  color: var(--p-text-color);
 }
 
 .content-theme-dark .page-card {

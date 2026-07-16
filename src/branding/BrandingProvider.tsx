@@ -17,7 +17,7 @@ interface BrandingContextValue {
   error: string | null;
   refresh: () => Promise<void>;
   updateBranding: (patch: Partial<AppBranding> & { clear_logo?: boolean }) => Promise<AppBranding>;
-  resetBranding: () => Promise<AppBranding>;
+  resetBranding: (preset?: string) => Promise<AppBranding>;
 }
 
 const BrandingContext = createContext<BrandingContextValue | null>(null);
@@ -49,8 +49,8 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
-  const resetBranding = useCallback(async () => {
-    const updated = await api.resetBranding();
+  const resetBranding = useCallback(async (preset = 'databricks') => {
+    const updated = await api.resetBranding(preset);
     queryClient.setQueryData(['branding'], updated);
     return updated;
   }, [queryClient]);

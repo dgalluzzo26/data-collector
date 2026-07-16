@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend import branding_repository
-from backend.branding_defaults import DEFAULT_BRANDING
+from backend.branding_presets import BRANDING_PALETTES, get_palette, palette_branding
 from backend.deps import require_app_admin
 from backend.models import BrandingConfig, BrandingUpdateRequest
 
 router = APIRouter()
+
+
+@router.get("/branding/presets")
+def list_branding_presets() -> list[dict]:
+    return [
+        {
+            "id": preset["id"],
+            "label": preset["label"],
+            "description": preset["description"],
+        }
+        for preset in BRANDING_PALETTES
+    ]
 
 
 @router.get("/branding", response_model=BrandingConfig)
@@ -31,7 +43,18 @@ def update_branding(request: Request, body: BrandingUpdateRequest) -> BrandingCo
 
 
 @router.post("/branding/reset", response_model=BrandingConfig)
-def reset_branding(request: Request) -> BrandingConfig:
+def reset_branding(
+    request: Request,
+    preset: str = Query(default="databricks", description="Palette preset id"),
+) -> BrandingConfig:
     email = require_app_admin(request)
-    saved = branding_repository.save_branding(DEFAULT_BRANDING, email)
+    preset_data = get_palette(preset)
+    if not preset_data:
+        raise HTTPException(status_code=400, detail=f"Unknown palette preset: {preset}")
+    updates = {
+        "chrome": preset_data["chrome"],
+        "light": preset_data["light"],
+        "dark": preset_data["dark"],
+    }
+    saved = branding_repository.save_branding(updates, email)
     return BrandingConfig.model_validate(saved)

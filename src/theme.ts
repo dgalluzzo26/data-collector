@@ -4,40 +4,40 @@ import type { AppBranding } from './types';
 
 export type ColorMode = 'light' | 'dark';
 
-const DHS_PRIMARY = {
-  main: '#005288',
-  light: '#0078ae',
-  dark: '#0c2340',
+const BRAND_PRIMARY = {
+  main: '#FF3621',
+  light: '#FF5C4D',
+  dark: '#EB1600',
 };
 
-const DHS_PRIMARY_DARK_CONTENT = {
-  main: '#7dd3fc',
-  light: '#bae6fd',
-  dark: '#005288',
-  contrastText: '#0c2340',
+const BRAND_PRIMARY_DARK_CONTENT = {
+  main: '#FF3621',
+  light: '#FF6B5A',
+  dark: '#EB1600',
+  contrastText: '#FFFFFF',
 };
 
 function paletteFromBranding(mode: ColorMode, branding?: AppBranding) {
   const colors = mode === 'dark' ? branding?.dark : branding?.light;
   const isDark = mode === 'dark';
-  const fallbackPrimary = isDark ? DHS_PRIMARY_DARK_CONTENT : DHS_PRIMARY;
+  const fallbackPrimary = isDark ? BRAND_PRIMARY_DARK_CONTENT : BRAND_PRIMARY;
   return {
     primary: colors
       ? { main: colors.primary, light: colors.primary_light, dark: colors.primary_dark }
       : fallbackPrimary,
     secondary: colors
       ? { main: colors.secondary, light: colors.secondary, dark: colors.secondary }
-      : { main: '#c41230', light: '#e03a52', dark: '#9a0e26' },
+      : { main: '#1B3139', light: '#1B5162', dark: '#0B2026' },
     background: colors
       ? { default: colors.background, paper: colors.paper }
       : isDark
-        ? { default: '#0c2340', paper: '#112e51' }
-        : { default: '#f8f9fb', paper: '#ffffff' },
+        ? { default: '#0B2026', paper: '#1B3139' }
+        : { default: '#F9F7F4', paper: '#FFFFFF' },
     text: colors
       ? { primary: colors.text_primary, secondary: colors.text_secondary }
       : isDark
-        ? { primary: 'rgba(255, 255, 255, 0.96)', secondary: 'rgba(255, 255, 255, 0.76)' }
-        : { primary: '#1b1b1b', secondary: '#5c5c5c' },
+        ? { primary: '#FFFFFF', secondary: '#90A5B1' }
+        : { primary: '#1B3139', secondary: '#90A5B1' },
   };
 }
 
@@ -68,13 +68,17 @@ export function getTheme(mode: ColorMode, branding?: AppBranding): Theme {
           containedPrimary: ({ theme }) =>
             theme.palette.mode === 'dark'
               ? {
-                  backgroundColor: DHS_PRIMARY.main,
+                  backgroundColor: BRAND_PRIMARY.main,
                   color: '#ffffff',
                   '&:hover': {
-                    backgroundColor: DHS_PRIMARY.light,
+                    backgroundColor: BRAND_PRIMARY.light,
                   },
                 }
-              : {},
+              : {
+                  '&:hover': {
+                    backgroundColor: BRAND_PRIMARY.dark,
+                  },
+                },
         },
       },
       MuiPaper: {
