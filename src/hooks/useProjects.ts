@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api, ApiAccessDeniedError } from '../api/client';
 import type { ProjectDetail, ProjectSummary } from '../types';
+
+export interface ProjectAccessDenied {
+  message: string;
+  collectionName?: string;
+  adminEmails: string[];
+}
 
 export function useProjects() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -30,14 +36,25 @@ export function useProject(projectId: string | undefined) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState<ProjectAccessDenied | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
     setError(null);
+    setAccessDenied(null);
     try {
       setProject(await api.getProject(projectId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load project');
+      setProject(null);
+      if (err instanceof ApiAccessDeniedError) {
+        setAccessDenied({
+          message: err.message,
+          collectionName: err.collectionName,
+          adminEmails: err.adminEmails,
+        });
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load project');
+      }
     } finally {
       setLoading(false);
     }
@@ -48,5 +65,5 @@ export function useProject(projectId: string | undefined) {
     void refresh();
   }, [refresh]);
 
-  return { project, loading, error, refresh };
+  return { project, loading, error, accessDenied, refresh };
 }

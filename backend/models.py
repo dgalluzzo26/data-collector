@@ -128,9 +128,20 @@ class UpdateProjectRequest(BaseModel):
     sync_table: Optional[str] = Field(default=None, max_length=128)
 
 
+class WorkspaceUser(BaseModel):
+    email: str
+    display_name: str
+
+
 class AddMemberRequest(BaseModel):
     user_email: str
     role: ProjectRole = "reader"
+
+
+class AddMemberResponse(BaseModel):
+    members: list[ProjectMember]
+    app_access_granted: bool = False
+    app_access_note: Optional[str] = None
 
 
 class SaveFieldsRequest(BaseModel):

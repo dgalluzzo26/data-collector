@@ -18,6 +18,9 @@ env:
     valueFrom: database
   - name: LAKEBASE_DEFAULT_SCHEMA
     value: data_collector
+  # Synced by scripts/deploy.sh per target (data-collector-dev / data-collector-prod).
+  - name: DATABRICKS_APP_NAME
+    value: "data-collector-prod"
 
 # sql-warehouse resource — deploy.sh syncs warehouse id before bundle deploy.
 # Lakebase: deploy.sh re-attaches the "database" resource after bundle deploy (bundle TF cannot declare postgres yet).

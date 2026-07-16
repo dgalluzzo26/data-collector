@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from backend.ai_client import _workspace_client
+from backend.workspace_client import workspace_client as _workspace_client
 
 
 def workspace_client():

@@ -61,6 +61,8 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     data: records = [],
     isLoading,
     isFetching,
+    isError,
+    error,
     refetch,
   } = useRecords(project.project_id, recordsEnabled, project.schema_version);
   const invalidateRecords = useInvalidateRecords();
@@ -312,6 +314,19 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
       {importMessage && (
         <Alert severity={importMessage.includes('failed') ? 'warning' : 'success'} onClose={() => setImportMessage(null)}>
           {importMessage}
+        </Alert>
+      )}
+
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => void refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Failed to load records: {error instanceof Error ? error.message : 'Unknown error'}
         </Alert>
       )}
 

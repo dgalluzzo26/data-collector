@@ -5,18 +5,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
+from backend.workspace_client import workspace_client
+
 _DEFAULT_ENDPOINT = "databricks-meta-llama-3-3-70b-instruct"
-
-
-def _workspace_client() -> WorkspaceClient:
-    host = (os.environ.get("DATABRICKS_HOST") or "").strip()
-    token = (os.environ.get("DATABRICKS_TOKEN") or "").strip()
-    if host and token and "REPLACE_WITH" not in token:
-        return WorkspaceClient(host=host.removeprefix("https://").removeprefix("http://"), token=token)
-    return WorkspaceClient()
 
 
 def fm_endpoint() -> str:
@@ -30,7 +23,7 @@ def chat_completion(
     max_tokens: int = 4096,
 ) -> str:
     """Call a Foundation Model serving endpoint and return assistant text."""
-    client = _workspace_client()
+    client = workspace_client()
     endpoint = fm_endpoint()
     chat_messages = [
         ChatMessage(role=ChatMessageRole(msg["role"]), content=msg["content"]) for msg in messages

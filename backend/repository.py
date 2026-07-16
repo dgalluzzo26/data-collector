@@ -56,7 +56,7 @@ def list_projects_for_user(user_email: str) -> list[dict[str, Any]]:
         WHERE m.user_email = ?
         ORDER BY p.updated_at DESC NULLS LAST, p.created_at DESC
     """
-    return fetchall(sql, (user_email,))
+    return fetchall(sql, (user_email.lower(),))
 
 
 def get_project(project_id: str) -> Optional[dict[str, Any]]:
@@ -86,7 +86,7 @@ def get_project_with_member(
 def get_member_role(project_id: str, user_email: str) -> Optional[ProjectRole]:
     row = fetchone(
         f"SELECT role FROM {_table('project_members')} WHERE project_id = ? AND user_email = ?",
-        (project_id, user_email),
+        (project_id, user_email.lower()),
     )
     return row["role"] if row else None
 
@@ -97,6 +97,18 @@ def list_members(project_id: str) -> list[ProjectMember]:
         (project_id,),
     )
     return [ProjectMember(**row) for row in rows]
+
+
+def list_admin_emails(project_id: str) -> list[str]:
+    rows = fetchall(
+        f"""
+        SELECT user_email FROM {_table('project_members')}
+        WHERE project_id = ? AND role = 'admin'
+        ORDER BY added_at
+        """,
+        (project_id,),
+    )
+    return [row["user_email"] for row in rows]
 
 
 def list_fields(

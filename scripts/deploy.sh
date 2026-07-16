@@ -66,18 +66,32 @@ echo "==> Ensuring workspace folder exists..."
 dbx workspace mkdirs "${DEPLOY_FOLDER}"
 
 if [[ -n "$WAREHOUSE_ID" ]]; then
-  echo "==> Syncing warehouse id into app.yaml (${WAREHOUSE_ID})..."
-  python3 - "$WAREHOUSE_ID" <<'PY'
+  RESOLVED_APP_NAME="${APP_NAME:-}"
+  if [[ -z "$RESOLVED_APP_NAME" ]]; then
+    if [[ "$TARGET" == "prod" ]]; then
+      RESOLVED_APP_NAME="data-collector-prod"
+    else
+      RESOLVED_APP_NAME="data-collector-dev"
+    fi
+  fi
+  echo "==> Syncing app.yaml (${WAREHOUSE_ID}, app=${RESOLVED_APP_NAME})..."
+  python3 - "$WAREHOUSE_ID" "$RESOLVED_APP_NAME" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-warehouse_id = sys.argv[1]
+warehouse_id, app_name = sys.argv[1], sys.argv[2]
 path = Path("app.yaml")
 text = path.read_text()
 text = re.sub(
     r'(id:\s*")[^"]+(")',
     rf'\g<1>{warehouse_id}\2',
+    text,
+    count=1,
+)
+text = re.sub(
+    r'(- name: DATABRICKS_APP_NAME\n\s+value:\s*")[^"]*(")',
+    rf'\1{app_name}\2',
     text,
     count=1,
 )
@@ -149,3 +163,6 @@ echo "(ENSURE_LAKEBASE_APP_RESOURCE=false to skip). See docs/LAKEBASE.md."
 echo ""
 echo "If /api returns permission errors, grant the app service principal"
 echo "USE CATALOG / SELECT on your metadata schema and collection tables."
+echo ""
+echo "For member management (workspace user search + auto Can use grants), grant"
+echo "the app service principal CAN_MANAGE on this app — see README.md §3b."

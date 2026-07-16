@@ -49,6 +49,17 @@ export interface UserInfo {
   display_name: string;
 }
 
+export interface WorkspaceUser {
+  email: string;
+  display_name: string;
+}
+
+export interface AddMemberResponse {
+  members: ProjectMember[];
+  app_access_granted: boolean;
+  app_access_note?: string | null;
+}
+
 export interface ProjectMember {
   project_id: string;
   user_email: string;

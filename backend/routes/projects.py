@@ -11,6 +11,7 @@ from backend.validation import build_lookup_allowed, validate_record_values
 from backend.timing import track_request
 from backend.models import (
     AddMemberRequest,
+    AddMemberResponse,
     CreateProjectRequest,
     CreateRecordRequest,
     FieldDefinition,
@@ -25,6 +26,7 @@ from backend.models import (
     SaveFieldsRequest,
     UpdateProjectRequest,
     UpdateRecordRequest,
+    WorkspaceUser,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -242,17 +244,38 @@ def update_project(project_id: str, body: UpdateProjectRequest, request: Request
     return _detail(project_id, role)
 
 
+@router.get("/{project_id}/workspace-users", response_model=list[WorkspaceUser])
+def search_workspace_users(project_id: str, request: Request, q: str = ""):
+    require_role(project_id, request, "admin")
+    try:
+        from backend import workspace_service
+
+        return [WorkspaceUser(**row) for row in workspace_service.list_workspace_users(q)]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not load workspace users: {exc}",
+        ) from exc
+
+
 @router.get("/{project_id}/members", response_model=list[ProjectMember])
 def list_members(project_id: str, request: Request):
     require_role(project_id, request, "admin")
     return repository.list_members(project_id)
 
 
-@router.post("/{project_id}/members", response_model=list[ProjectMember], status_code=201)
+@router.post("/{project_id}/members", response_model=AddMemberResponse, status_code=201)
 def add_member(project_id: str, body: AddMemberRequest, request: Request):
     user, _ = require_role(project_id, request, "admin")
     repository.add_member(project_id, body.user_email, body.role, user)
-    return repository.list_members(project_id)
+    from backend import workspace_service
+
+    granted, note = workspace_service.ensure_app_user_access(body.user_email)
+    return AddMemberResponse(
+        members=repository.list_members(project_id),
+        app_access_granted=granted,
+        app_access_note=note,
+    )
 
 
 @router.delete("/{project_id}/members/{user_email}", response_model=list[ProjectMember])
@@ -303,7 +326,7 @@ def list_records(project_id: str, request: Request, response: Response):
             email = auth.get_user_email(request)
             project, role = repository.get_project_with_member(project_id, email)
             timer.mark("auth_project_ms")
-            assert_role(role, "reader")
+            assert_role(role, "reader", project_id)
             if not project or project["status"] != "published":
                 timer.set_extra(project_id=project_id, row_count=0, storage_type=None)
                 result: list[RecordRow] = []
@@ -335,7 +358,7 @@ def create_record(project_id: str, body: CreateRecordRequest, request: Request, 
             email = auth.get_user_email(request)
             project, role = repository.get_project_with_member(project_id, email)
             timer.mark("auth_project_ms")
-            assert_role(role, "editor")
+            assert_role(role, "editor", project_id)
             if not project or project["status"] != "published":
                 raise HTTPException(
                     status_code=400,

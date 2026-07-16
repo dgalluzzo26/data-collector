@@ -24,6 +24,7 @@ import RecordsPanel from './RecordsPanel';
 import StorageSettingsPanel from './StorageSettingsPanel';
 import GenieAskPanel from './GenieAskPanel';
 import DataEntryUrl from '../common/DataEntryUrl';
+import CollectionAccessDenied from '../common/CollectionAccessDenied';
 
 type TabKey = 'records' | 'designer' | 'lookups' | 'members' | 'settings' | 'genie';
 
@@ -32,7 +33,7 @@ export default function ProjectWorkspace() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') as TabKey) || 'designer';
-  const { project, loading, error, refresh } = useProject(projectId);
+  const { project, loading, error, accessDenied, refresh } = useProject(projectId);
   const [draftFields, setDraftFields] = useState<FieldDefinition[]>([]);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -52,6 +53,14 @@ export default function ProjectWorkspace() {
         <CircularProgress size={22} />
         <Typography>Loading project…</Typography>
       </Box>
+    );
+  }
+  if (accessDenied) {
+    return (
+      <CollectionAccessDenied
+        collectionName={accessDenied.collectionName}
+        adminEmails={accessDenied.adminEmails}
+      />
     );
   }
   if (error || !project) return <Typography color="error">{error || 'Project not found'}</Typography>;

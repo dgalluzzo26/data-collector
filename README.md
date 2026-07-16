@@ -282,6 +282,38 @@ Use the **client id UUID** in backticks — the display name (`app-xxxxx data-co
 
 **Grant users access to the app:** Compute → Apps → your app → **Permissions** → add users/groups with **Can use**.
 
+### 3b. App service principal — Can manage (required for member management)
+
+When collection admins add members, the app:
+
+1. **Searches workspace users** (member picker autocomplete)
+2. **Grants Can use on this app** to new members who do not already have app access
+
+Both steps call Databricks workspace APIs as the **app service principal**. That principal must have **Can manage** on the app itself so it can update app permissions.
+
+**One-time setup (per deployed app, e.g. `data-collector-prod`):**
+
+1. **Compute → Apps →** your app → **Permissions**
+2. Find the app **service principal** (same client id as in [§3](#3-grant-unity-catalog-permissions-required), e.g. `b73ec2ef-401b-47f4-8ca9-b7a2790320a5`)
+3. Set permission to **Can manage** (not only Can use)
+
+Or via CLI (replace app name and service principal client id):
+
+```bash
+databricks apps update-permissions data-collector-prod -p fvm --json '{
+  "access_control_list": [
+    {
+      "service_principal_name": "b73ec2ef-401b-47f4-8ca9-b7a2790320a5",
+      "permission_level": "CAN_MANAGE"
+    }
+  ]
+}'
+```
+
+Without this grant, member search may fail and auto **Can use** grants will not apply — you can still type an email manually, but new members may see the access-denied page until an admin adds them under **App → Permissions**.
+
+`DATABRICKS_APP_NAME` in `app.yaml` (synced by `deploy.sh`) must match the deployed app name so permission grants target the correct app.
+
 ### 4. Lakebase database resource (optional)
 
 Required only if you want collections with **Storage → Lakebase (Postgres)**. App metadata still lives in UC Delta; record tables can live in Lakebase.
@@ -316,6 +348,7 @@ See [docs/LAKEBASE.md](docs/LAKEBASE.md) for local dev connection vars and limit
 |------|--------|
 | UC grants on metadata schema | Collections page loads (no Internal Server Error) |
 | App permissions for your user | You can open the app URL |
+| **App SP has Can manage on the app** | Member picker finds users; adding a member grants them **Can use** on the app |
 | SQL warehouse bound | Settings shows warehouse id / `db_status: ok` |
 | Lakebase resource (if used) | Settings shows `Lakebase configured: yes` |
 | Collection membership | Your workspace email is a project member (not only `local-dev@example.com`) |
@@ -331,6 +364,9 @@ For local dev, set `DEV_USER_EMAIL=you@company.com` in `.env` so collections mat
 | Internal Server Error on Collections | UC grants for service principal client id |
 | Empty collections in prod | Add your email to `project_members` or set `DEV_USER_EMAIL` locally |
 | Lakebase option fails on create | Redeploy with latest `deploy.sh` (auto re-attaches database); check Settings |
+| Member search fails in prod | Grant the app **service principal** **Can manage** on the app (see [§3b](#3b-app-service-principal--can-manage-required-for-member-management)); type email manually as fallback |
+| Auto app access not granted for new members | Same — app SP needs **Can manage** on the app; check `DATABRICKS_APP_NAME` matches deployed app name |
+| `permission denied for schema data_collector` on records | Run `scripts/repair_lakebase_grants.py` locally as schema owner (see [LAKEBASE.md](docs/LAKEBASE.md)) |
 
 ## Related documentation
 

@@ -1,6 +1,7 @@
 import { beginBusy, endBusy } from '../statusBus';
 import type {
   ApplyProjectProposalPayload,
+  AddMemberResponse,
   AppConfig,
   BindLookupPayload,
   CreateProjectPayload,
@@ -20,6 +21,7 @@ import type {
   ImportRecordsResult,
   UcTablePreview,
   UserInfo,
+  WorkspaceUser,
 } from '../types';
 
 const BASE = '/api';
@@ -32,6 +34,57 @@ export class ApiValidationError extends Error {
     this.name = 'ApiValidationError';
     this.fieldErrors = fieldErrors;
   }
+}
+
+export class ApiAccessDeniedError extends Error {
+  collectionName?: string;
+  adminEmails: string[];
+
+  constructor(message: string, collectionName?: string, adminEmails: string[] = []) {
+    super(message);
+    this.name = 'ApiAccessDeniedError';
+    this.collectionName = collectionName;
+    this.adminEmails = adminEmails;
+  }
+}
+
+type ApiErrorDetail =
+  | string
+  | {
+      message?: string;
+      field_errors?: Record<string, string>;
+      collection_name?: string;
+      admin_emails?: string[];
+    };
+
+function parseApiError(status: number, text: string): Error {
+  try {
+    const json = JSON.parse(text) as { detail?: ApiErrorDetail };
+    const detail = json.detail;
+    if (detail && typeof detail === 'object') {
+      if (detail.field_errors) {
+        return new ApiValidationError(detail.field_errors);
+      }
+      if (status === 403 && detail.admin_emails) {
+        return new ApiAccessDeniedError(
+          detail.message || 'Not a member of this project',
+          detail.collection_name,
+          detail.admin_emails,
+        );
+      }
+      if (detail.message) {
+        return new Error(detail.message);
+      }
+    }
+    if (typeof detail === 'string') {
+      return new Error(detail);
+    }
+  } catch (err) {
+    if (err instanceof ApiValidationError || err instanceof ApiAccessDeniedError) {
+      throw err;
+    }
+  }
+  return new Error(text || `API ${status}`);
 }
 
 async function request<T>(
@@ -55,15 +108,7 @@ async function request<T>(
     });
     if (!res.ok) {
       const text = await res.text();
-      try {
-        const json = JSON.parse(text) as { detail?: { field_errors?: Record<string, string> } };
-        if (json.detail?.field_errors) {
-          throw new ApiValidationError(json.detail.field_errors);
-        }
-      } catch (err) {
-        if (err instanceof ApiValidationError) throw err;
-      }
-      throw new Error(text || `API ${res.status}`);
+      throw parseApiError(res.status, text);
     }
     if (res.status === 204 || res.headers.get('content-length') === '0') {
       return undefined as T;
@@ -96,8 +141,14 @@ export const api = {
     request<ProjectDetail>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, 'Saving…'),
 
   listMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`, undefined, 'Loading members…'),
+  searchWorkspaceUsers: (id: string, q: string) =>
+    request<WorkspaceUser[]>(
+      `/projects/${id}/workspace-users?q=${encodeURIComponent(q)}`,
+      undefined,
+      'Searching workspace users…',
+    ),
   addMember: (id: string, user_email: string, role: string) =>
-    request<ProjectMember[]>(
+    request<AddMemberResponse>(
       `/projects/${id}/members`,
       { method: 'POST', body: JSON.stringify({ user_email, role }) },
       'Adding member…',

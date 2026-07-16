@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -17,6 +18,21 @@ def _now() -> datetime:
 
 def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _quote_grantee(role: str) -> str:
+    if role.upper() == "PUBLIC":
+        return "PUBLIC"
+    return _quote_ident(role)
+
+
+def _lakebase_grantees() -> list[str]:
+    """Roles that should read/write collection tables (e.g. prod app service principal)."""
+    grantees = ["PUBLIC"]
+    extra = (os.environ.get("LAKEBASE_ADDITIONAL_GRANTEES") or "").strip()
+    if extra:
+        grantees.extend(part.strip() for part in extra.split(",") if part.strip())
+    return grantees
 
 
 def table_ref(project: dict[str, Any]) -> str:
@@ -45,6 +61,23 @@ def _pg_type(field_type: str) -> str:
 def ensure_schema(project: dict[str, Any]) -> None:
     pg_util.execute(
         f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(project['target_schema'])}"
+    )
+
+
+def ensure_collection_grants(project: dict[str, Any]) -> None:
+    """Grant schema/table access so prod app PGUSER can read tables created locally."""
+    schema = _quote_ident(project["target_schema"])
+    ref = table_ref(project)
+    for grantee in _lakebase_grantees():
+        role = _quote_grantee(grantee)
+        pg_util.execute(f"GRANT USAGE ON SCHEMA {schema} TO {role}")
+        pg_util.execute(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {role}"
+        )
+        pg_util.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {ref} TO {role}")
+    pg_util.execute(
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} "
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC"
     )
 
 
@@ -77,6 +110,8 @@ def publish_table(
                 msg = str(exc).lower()
                 if "already exists" not in msg and "duplicate" not in msg:
                     raise
+
+    ensure_collection_grants(project)
 
 
 def list_records(

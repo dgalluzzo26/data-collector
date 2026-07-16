@@ -112,3 +112,27 @@ Install deps: `pip install -r requirements.txt` (includes `psycopg[binary,pool]`
 
 - **Genie Q&A** for Lakebase collections requires a **Unity Catalog sync location** (configured in Databricks outside this app). Set catalog, schema, and table in collection Settings after enabling Lakehouse Sync or UC registration.
 - Lookups and metadata still use the SQL warehouse / UC metadata schema
+
+## Troubleshooting
+
+### `permission denied for schema data_collector` (prod 500 on `/records`)
+
+**Cause:** Collection tables were published from **local dev** using your workspace email as `PGUSER`. The **prod app** connects as a different Postgres role (the app service principal). That role does not automatically get `USAGE` on schemas you created locally.
+
+**Fix (one-time, run locally as schema owner):**
+
+1. Find the prod app Postgres user: **Compute → Apps → data-collector-prod → Environment** → copy `PGUSER`.
+2. From the repo (with Lakebase vars in `.env`):
+
+```bash
+export LAKEBASE_ADDITIONAL_GRANTEES='<paste-prod-PGUSER-here>'
+.venv/bin/python scripts/repair_lakebase_grants.py
+```
+
+Or repair one collection:
+
+```bash
+.venv/bin/python scripts/repair_lakebase_grants.py --project-id ceda02fd-93ba-4057-aff4-b4301c8fc06a
+```
+
+**Prevention:** New publishes automatically run `ensure_collection_grants()` so the prod app role can access tables. Re-publish or run the repair script for collections published before this fix.

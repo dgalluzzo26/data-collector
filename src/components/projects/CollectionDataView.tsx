@@ -14,6 +14,7 @@ import { useProject } from '../../hooks/useProjects';
 import { collectionAdminPath } from '../../lib/collectionPaths';
 import { showGenieTab } from '../../lib/genie';
 import type { CollectionDataTab } from '../../lib/collectionPaths';
+import CollectionAccessDenied from '../common/CollectionAccessDenied';
 import GenieAskPanel from './GenieAskPanel';
 import RecordsPanel from './RecordsPanel';
 
@@ -21,7 +22,7 @@ export default function CollectionDataView() {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get('tab') as CollectionDataTab) || 'records';
-  const { project, loading, error, refresh } = useProject(projectId);
+  const { project, loading, error, accessDenied, refresh } = useProject(projectId);
 
   useEffect(() => {
     if (projectId) {
@@ -37,6 +38,15 @@ export default function CollectionDataView() {
         <CircularProgress size={22} />
         <Typography>Loading collection…</Typography>
       </Box>
+    );
+  }
+
+  if (accessDenied) {
+    return (
+      <CollectionAccessDenied
+        collectionName={accessDenied.collectionName}
+        adminEmails={accessDenied.adminEmails}
+      />
     );
   }
 

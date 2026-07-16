@@ -8,8 +8,28 @@ from backend.models import ProjectRole
 _ROLE_RANK = {"reader": 1, "editor": 2, "admin": 3}
 
 
-def assert_role(role: ProjectRole | None, minimum: ProjectRole) -> None:
+def access_denied_detail(project_id: str) -> dict:
+    project = repository.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    admin_emails = repository.list_admin_emails(project_id)
+    if not admin_emails and project.get("created_by"):
+        admin_emails = [project["created_by"]]
+    return {
+        "message": "Not a member of this project",
+        "collection_name": project.get("name"),
+        "admin_emails": admin_emails,
+    }
+
+
+def deny_not_member(project_id: str) -> None:
+    raise HTTPException(status_code=403, detail=access_denied_detail(project_id))
+
+
+def assert_role(role: ProjectRole | None, minimum: ProjectRole, project_id: str | None = None) -> None:
     if not role:
+        if project_id:
+            deny_not_member(project_id)
         raise HTTPException(status_code=403, detail="Not a member of this project")
     if _ROLE_RANK[role] < _ROLE_RANK[minimum]:
         raise HTTPException(status_code=403, detail=f"Requires {minimum} role")
@@ -19,7 +39,7 @@ def require_role(project_id: str, request: Request, minimum: ProjectRole) -> tup
     email = auth.get_user_email(request)
     role = repository.get_member_role(project_id, email)
     if not role:
-        raise HTTPException(status_code=403, detail="Not a member of this project")
+        deny_not_member(project_id)
     if _ROLE_RANK[role] < _ROLE_RANK[minimum]:
         raise HTTPException(status_code=403, detail=f"Requires {minimum} role")
     return email, role

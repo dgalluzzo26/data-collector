@@ -20,11 +20,11 @@ def get_user_email(request: Request) -> str:
     ):
         value = (request.headers.get(header) or "").strip()
         if value and _EMAIL_LIKE.match(value):
-            return value
+            return value.lower()
 
     dev = (os.environ.get("DEV_USER_EMAIL") or "").strip()
     if dev:
-        return dev
+        return dev.lower()
     return _LOCAL_DEV_EMAIL
 
 

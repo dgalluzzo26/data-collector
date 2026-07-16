@@ -119,6 +119,11 @@ def run(
             print("  schema + metadata tables ready")
 
     print("Done.")
+    print()
+    print("After deploying the Databricks App, also:")
+    print("  1. Grant the app service principal UC access (see README §3)")
+    print("  2. Grant the app service principal CAN_MANAGE on the app itself")
+    print("     so member management can search users and grant Can use (README §3b)")
 
 
 def main() -> None:
