@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import DeleteIcon from '@mui/icons-material/Delete';
 import DownloadIcon from '@mui/icons-material/Download';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import UploadIcon from '@mui/icons-material/Upload';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -9,10 +9,14 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
+import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { api, ApiValidationError } from '../../api/client';
+import { useLookupOptions } from '../../hooks/useLookupOptions';
+import { useInvalidateRecords, useRecords } from '../../hooks/useRecords';
 import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
+import { buildRecordGridColumns } from '../../lib/recordGridColumns';
 import type { ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
 import { validateRecordValues } from '../../lib/recordValidation';
 import BusyButton from '../common/BusyButton';
@@ -52,8 +56,20 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     () => selectPublishedFields(project).sort((a, b) => a.sort_order - b.sort_order),
     [project.fields, project.schema_version],
   );
-  const [records, setRecords] = useState<RecordRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const recordsEnabled = project.status === 'published';
+  const {
+    data: records = [],
+    isLoading,
+    isFetching,
+    refetch,
+  } = useRecords(project.project_id, recordsEnabled, project.schema_version);
+  const invalidateRecords = useInvalidateRecords();
+  const { data: lookupOptions = {} } = useLookupOptions(
+    project.project_id,
+    publishedFields,
+    project.lookups,
+  );
+
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const [formValues, setFormValues] = useState<Record<string, unknown>>({});
@@ -66,35 +82,13 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const rows = await api.listRecords(project.project_id);
-      setRecords(rows);
-    } finally {
-      setLoading(false);
-    }
-  }, [project.project_id]);
+  const refreshRecords = useCallback(async () => {
+    await refetch();
+  }, [refetch]);
 
-  useEffect(() => {
-    if (project.status !== 'published') {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const rows = await api.listRecords(project.project_id);
-        if (!cancelled) setRecords(rows);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [project.project_id, project.status, project.schema_version]);
+  const syncRecords = useCallback(async () => {
+    await invalidateRecords(project.project_id, project.schema_version);
+  }, [invalidateRecords, project.project_id, project.schema_version]);
 
   useEffect(() => {
     if (!editing) {
@@ -118,14 +112,24 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
 
   const gridRows = useMemo(
     () =>
-      records.map((r) => ({
-        id: r.record_id,
-        created_by: r.created_by ?? '',
-        updated_by: r.updated_by ?? '',
-        ...r.values,
+      records.map((record) => ({
+        id: record.record_id,
+        created_by: record.created_by ?? '',
+        updated_by: record.updated_by ?? '',
+        ...record.values,
       })),
     [records],
   );
+
+  const lookupAllowed = useMemo(() => {
+    const allowed: Record<string, Set<string>> = {};
+    for (const field of publishedFields) {
+      if (field.field_type !== 'lookup' || !field.config_json?.lookup_id) continue;
+      const options = lookupOptions[field.field_key] ?? [];
+      allowed[field.field_key] = new Set(options.map((option) => option.value).filter(Boolean));
+    }
+    return allowed;
+  }, [publishedFields, lookupOptions]);
 
   const removeRecord = useCallback(
     async (recordId: string) => {
@@ -140,50 +144,22 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
           }
           return current;
         });
-        await refresh();
+        await syncRecords();
       } finally {
         setDeleting(false);
       }
     },
-    [project.project_id, refresh],
+    [project.project_id, syncRecords],
   );
 
-  const columns: GridColDef[] = useMemo(() => {
-    const cols: GridColDef[] = publishedFields.map((field) => ({
-      field: field.field_key,
-      headerName: field.label,
-      flex: 1,
-      minWidth: 120,
-    }));
-    cols.push(
-      { field: 'created_by', headerName: 'Created by', width: 160 },
-      { field: 'updated_by', headerName: 'Updated by', width: 160 },
-    );
-    if (canEdit) {
-      cols.push({
-        field: '_actions',
-        headerName: '',
-        width: 56,
-        sortable: false,
-        filterable: false,
-        disableColumnMenu: true,
-        renderCell: (params) => (
-          <IconButton
-            size="small"
-            color="error"
-            aria-label="Delete record"
-            onClick={(e) => {
-              e.stopPropagation();
-              void removeRecord(String(params.id));
-            }}
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
-        ),
-      });
-    }
-    return cols;
-  }, [publishedFields, canEdit, removeRecord]);
+  const columns = useMemo(
+    () =>
+      buildRecordGridColumns(publishedFields, lookupOptions, {
+        canEdit,
+        onDelete: (recordId) => void removeRecord(recordId),
+      }),
+    [publishedFields, lookupOptions, canEdit, removeRecord],
+  );
 
   const openNew = () => {
     setEditing(null);
@@ -225,14 +201,14 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
       } else {
         const detail = result.failed
           .slice(0, 3)
-          .map((f) => `row ${f.row}`)
+          .map((failed) => `row ${failed.row}`)
           .join(', ');
         const suffix = failedCount > 3 ? ` (+${failedCount - 3} more)` : '';
         setImportMessage(
           `Imported ${result.created}; ${failedCount} row${failedCount === 1 ? '' : 's'} failed (${detail}${suffix}).`,
         );
       }
-      await refresh();
+      await syncRecords();
     } catch (err) {
       setImportMessage(err instanceof Error ? err.message : 'CSV import failed');
     } finally {
@@ -241,21 +217,7 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     }
   };
 
-  const buildLookupAllowed = async (): Promise<Record<string, Set<string>>> => {
-    const allowed: Record<string, Set<string>> = {};
-    for (const field of publishedFields) {
-      if (field.field_type !== 'lookup' || !field.config_json?.lookup_id) continue;
-      const valueCol = (field.config_json.value_column as string) || 'code';
-      const rows = await api.getLookupRows(project.project_id, field.config_json.lookup_id as string);
-      allowed[field.field_key] = new Set(
-        rows.map((r) => String(r.values[valueCol] ?? '')).filter(Boolean),
-      );
-    }
-    return allowed;
-  };
-
   const save = async () => {
-    const lookupAllowed = await buildLookupAllowed();
     const errors = validateRecordValues(publishedFields, formValues, lookupAllowed);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
@@ -270,7 +232,7 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
       setDrawerOpen(false);
       setFieldErrors({});
       setAuditLog([]);
-      await refresh();
+      await syncRecords();
     } catch (err) {
       if (err instanceof ApiValidationError) {
         setFieldErrors(err.fieldErrors);
@@ -296,7 +258,19 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 480 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="h6">Records</Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Tooltip title="Refresh records">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Refresh records"
+                onClick={() => void refreshRecords()}
+                disabled={isFetching}
+              >
+                {isFetching ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
+              </IconButton>
+            </span>
+          </Tooltip>
           <Button
             variant="outlined"
             size="small"
@@ -346,15 +320,26 @@ export default function RecordsPanel({ project, canEdit }: RecordsPanelProps) {
           key={`records-${project.schema_version}-${publishedFields.length}`}
           rows={gridRows}
           columns={columns}
-          loading={loading}
+          loading={isLoading}
           onRowClick={(params) => {
-            const record = records.find((r) => r.record_id === params.id);
+            const record = records.find((row) => row.record_id === params.id);
             if (record && canEdit) openEdit(record);
           }}
           disableRowSelectionOnClick
-          pageSizeOptions={[10, 25, 50]}
-          initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-          sx={{ height: 520, width: '100%' }}
+          sortingMode="client"
+          filterMode="client"
+          slots={{ toolbar: GridToolbar }}
+          slotProps={{
+            toolbar: {
+              showQuickFilter: true,
+              quickFilterProps: { debounceMs: 300 },
+            },
+          }}
+          pageSizeOptions={[10, 25, 50, 100]}
+          initialState={{
+            pagination: { paginationModel: { pageSize: 25 } },
+          }}
+          sx={{ height: 560, width: '100%' }}
         />
       </Box>
 
