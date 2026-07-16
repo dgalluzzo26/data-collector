@@ -24,7 +24,7 @@ App metadata lives in Unity Catalog:
 | Catalog | `serverless_stable_tgnklq_catalog` |
 | Schema | `data_collector` |
 
-Tables created: `projects`, `project_members`, `field_definitions`, `form_layouts`, `schema_versions`, `record_audit_log`.
+Tables created: `projects`, `project_members`, `field_definitions`, `form_layouts`, `schema_versions`, `record_audit_log`, `app_settings`.
 
 ### Python script (recommended — no Databricks CLI)
 
@@ -154,6 +154,7 @@ echo "dapi<your-token>" | databricks configure \
 |----------|---------|-------------|
 | `DATABRICKS_DEPLOY_FOLDER` | `/Workspace/DBRX-Apps` | Workspace folder for bundle artifacts. Created by `deploy.sh` if missing. |
 | `DATABRICKS_APP_NAME` | `data-collector-dev` / `data-collector-prod` | Override deployed app name per target. |
+| `APP_ADMIN_EMAILS` | (empty) | Comma-separated workspace emails allowed to edit app branding (logo, title, colors) in **Settings**. Set in `app.yaml` for prod; see [§3c](#3c-app-administrators-branding). |
 | `DATABRICKS_TF_EXEC_PATH` | system `terraform` | Path to Terraform binary (workaround for CLI PGP key issues). |
 | `DATABRICKS_TF_VERSION` | auto-detected | Terraform version string for bundle. |
 
@@ -213,6 +214,7 @@ DATABRICKS_SCHEMA=data_collector
 # Optional overrides
 # DATABRICKS_DEPLOY_FOLDER=/Workspace/DBRX-Apps
 # DATABRICKS_APP_NAME=data-collector-prod
+# APP_ADMIN_EMAILS=you@company.com,teammate@company.com
 
 # Lakebase (prod re-attaches automatically)
 # LAKEBASE_BRANCH=projects/data-collector/branches/production
@@ -314,6 +316,30 @@ Without this grant, member search may fail and auto **Can use** grants will not 
 
 `DATABRICKS_APP_NAME` in `app.yaml` (synced by `deploy.sh`) must match the deployed app name so permission grants target the correct app.
 
+### 3c. App administrators (branding)
+
+App **branding** (logo, title, light/dark color palettes) is editable only by users listed in `APP_ADMIN_EMAILS`. Everyone else sees the configured branding but does not get the admin panel in **Settings**.
+
+**Prod — set in `app.yaml` before deploy** (comma-separated workspace emails):
+
+```yaml
+env:
+  - name: APP_ADMIN_EMAILS
+    value: "admin@company.com,other.admin@company.com"
+```
+
+`deploy.sh` syncs warehouse id and app name into `app.yaml`; add or update `APP_ADMIN_EMAILS` in that file and redeploy when admins change.
+
+**Local dev — set in `.env`:**
+
+```bash
+APP_ADMIN_EMAILS=you@company.com
+```
+
+Also set `DEV_USER_EMAIL` to the same address so `/api/me` and `/api/health` report `is_app_admin: true` locally.
+
+Branding is stored in the `app_settings` UC table (created by `scripts/setup.py`). Predefined palettes: Databricks, DHS Government, Slate Neutral, or custom colors.
+
 ### 4. Lakebase database resource (optional)
 
 Required only if you want collections with **Storage → Lakebase (Postgres)**. App metadata still lives in UC Delta; record tables can live in Lakebase.
@@ -349,6 +375,7 @@ See [docs/LAKEBASE.md](docs/LAKEBASE.md) for local dev connection vars and limit
 | UC grants on metadata schema | Collections page loads (no Internal Server Error) |
 | App permissions for your user | You can open the app URL |
 | **App SP has Can manage on the app** | Member picker finds users; adding a member grants them **Can use** on the app |
+| **`APP_ADMIN_EMAILS` in `app.yaml`** | Listed admins see **App branding** in Settings |
 | SQL warehouse bound | Settings shows warehouse id / `db_status: ok` |
 | Lakebase resource (if used) | Settings shows `Lakebase configured: yes` |
 | Collection membership | Your workspace email is a project member (not only `local-dev@example.com`) |
