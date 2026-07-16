@@ -13,7 +13,8 @@ from backend.models import (
     UcTablePreview,
     UpdateLookupRequest,
 )
-from backend.sql_util import request_connections, user_data_access
+from backend.sql_errors import UserAuthorizationRequiredError
+from backend.sql_util import request_connections, uc_browse_scope
 
 router = APIRouter(prefix="/projects/{project_id}/lookups", tags=["lookups"])
 
@@ -35,7 +36,7 @@ def preview_uc_table(
     require_role(project_id, request, "admin")
     try:
         with request_connections(request):
-            with user_data_access():
+            with uc_browse_scope():
                 preview = uc_util.preview_uc_table(catalog.strip(), schema.strip(), table.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -51,7 +52,7 @@ def list_uc_schemas(
     require_role(project_id, request, "admin")
     try:
         with request_connections(request):
-            with user_data_access():
+            with uc_browse_scope():
                 return uc_util.list_schemas(catalog.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -67,7 +68,7 @@ def list_uc_tables(
     require_role(project_id, request, "admin")
     try:
         with request_connections(request):
-            with user_data_access():
+            with uc_browse_scope():
                 return uc_util.list_tables(catalog.strip(), schema.strip())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -78,7 +79,7 @@ def bind_lookup(project_id: str, body: BindLookupRequest, request: Request):
     user, _ = require_role(project_id, request, "admin")
     try:
         with request_connections(request):
-            with user_data_access():
+            with uc_browse_scope():
                 return lookups.create_lookup_from_uc(
                     project_id,
                     name=body.name.strip(),
@@ -163,7 +164,7 @@ def list_rows(project_id: str, lookup_id: str, request: Request):
     if not lookups.get_lookup(project_id, lookup_id):
         raise HTTPException(status_code=404, detail="Lookup table not found")
     with request_connections(request):
-        with user_data_access():
+        with uc_browse_scope():
             return lookups.list_lookup_rows(lookup_id)
 
 

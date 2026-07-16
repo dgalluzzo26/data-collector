@@ -27,6 +27,11 @@ def _is_managed_uc(project: dict[str, Any]) -> bool:
     return project.get("storage_type") == "uc_delta" and not _is_existing_uc(project)
 
 
+def use_user_token_for_uc_browse() -> bool:
+    """True when UC schema/table pickers should run as the signed-in user."""
+    return get_uc_data_access_mode() == "user_obo"
+
+
 def use_user_token_for_project(project: dict[str, Any]) -> bool:
     """True when UC data SQL should run as the signed-in user (on-behalf-of)."""
     if _is_lakebase(project):

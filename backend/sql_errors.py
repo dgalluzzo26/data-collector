@@ -18,7 +18,8 @@ class UserAuthorizationRequiredError(Exception):
         self,
         message: str = (
             "User authorization is required for Unity Catalog data access. "
-            "Enable User authorization with the sql scope on the Databricks App."
+            "Enable User authorization with the sql scope on the Databricks App, "
+            "restart the app, and ensure your user has CAN USE on the SQL warehouse."
         ),
     ) -> None:
         super().__init__(message)

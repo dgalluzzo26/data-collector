@@ -64,8 +64,12 @@ def get_connection(
     )
 
     if access_token:
+        from databricks.sdk import WorkspaceClient
+
+        # Always use the app workspace host for OBO tokens (not DATABRICKS_HOST from .env).
+        workspace_host = _normalize_host(WorkspaceClient().config.host)
         return dbsql.connect(
-            server_hostname=_resolve_host(host),
+            server_hostname=workspace_host,
             http_path=http_path,
             access_token=access_token,
         )

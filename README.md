@@ -282,7 +282,7 @@ The deployed app uses **two identities** (configurable via `UC_DATA_ACCESS_MODE`
 | Layer | Identity | UC access |
 |-------|----------|-----------|
 | App metadata (projects, fields, members, lookups) | **Service principal** | Metadata schema only |
-| UC browse (schema/table pickers, lookup bind, preview) | **Signed-in user** (on-behalf-of) | User's existing UC grants |
+| UC browse (schema/table pickers, lookup bind, preview) | **App SP** in `hybrid`; **user OBO** in `user_obo` | SP needs UC read on catalogs browsed; `user_obo` uses user's grants |
 | Collection data — **managed** tables (app-created) | **Service principal** (hybrid / `service_principal`) | SP needs CREATE + MODIFY on target schema; members get auto-GRANT on publish/add |
 | Collection data — **existing UC** tables (`storage_mode=existing_uc`) | **Signed-in user** (hybrid / `user_obo`) | User's existing UC grants; optional auto-GRANT if SP has MANAGE on the table |
 
@@ -296,7 +296,7 @@ The deployed app uses **two identities** (configurable via `UC_DATA_ACCESS_MODE`
 
 Without service-principal grants on the metadata schema, `/api/projects` returns **Internal Server Error** (`USE CATALOG` denied).
 
-**Enable user authorization on the app** (required for UC browse, existing-UC collections, and `user_obo` mode):
+**Enable user authorization on the app** (required for **existing-UC collection data** in hybrid mode, and for all data access in `user_obo` mode):
 
 1. **Compute → Apps →** your app → **Edit**
 2. Under **User authorization**, enable it and add the **`sql`** scope

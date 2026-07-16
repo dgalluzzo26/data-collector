@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,8 +18,14 @@ from backend.sql_errors import (
     as_permission_error,
     is_permission_denied,
 )
-from backend.uc_data_access import get_uc_data_access_mode, use_user_token_for_project
+from backend.uc_data_access import (
+    get_uc_data_access_mode,
+    use_user_token_for_project,
+    use_user_token_for_uc_browse,
+)
 from backend.timing import get_timer
+
+logger = logging.getLogger(__name__)
 
 _metadata_connection: ContextVar[Any | None] = ContextVar("sql_metadata_connection", default=None)
 _data_connection: ContextVar[Any | None] = ContextVar("sql_data_connection", default=None)
@@ -44,12 +51,35 @@ def project_data_scope(project: Any | None) -> Iterator[None]:
 
 @contextmanager
 def user_data_access() -> Iterator[None]:
-    """Force UC browse/preview SQL to use the signed-in user's token."""
+    """Force UC SQL to use the signed-in user's token (user_obo browse mode)."""
     token = _force_user_data.set(True)
     try:
         yield
     finally:
         _force_user_data.reset(token)
+
+
+@contextmanager
+def uc_browse_scope() -> Iterator[None]:
+    """Pick SP vs user token for UC schema/table pickers based on access mode."""
+    if use_user_token_for_uc_browse():
+        with user_data_access():
+            yield
+    else:
+        yield
+
+
+def _open_user_data_connection(user_token: str) -> Any | None:
+    try:
+        return get_connection(access_token=user_token)
+    except Exception as exc:
+        mode = get_uc_data_access_mode()
+        if mode == "user_obo":
+            raise UserAuthorizationRequiredError(
+                f"Could not open a Unity Catalog SQL session as the signed-in user: {exc}"
+            ) from exc
+        logger.warning("User OBO SQL connection unavailable (existing UC collections may not work): %s", exc)
+        return None
 
 
 def _resolve_data_connection() -> Any:
@@ -67,11 +97,18 @@ def _resolve_data_connection() -> Any:
         return conn
 
     mode = get_uc_data_access_mode()
-    if mode == "service_principal" and project is not None:
-        conn = _metadata_connection.get()
-        if conn is None:
-            raise RuntimeError("Metadata SQL connection is not available")
-        return conn
+    if mode in ("hybrid", "service_principal"):
+        if project is None:
+            # UC browse / introspection without a collection — app service principal.
+            conn = _metadata_connection.get()
+            if conn is None:
+                raise RuntimeError("Metadata SQL connection is not available")
+            return conn
+        if mode == "service_principal":
+            conn = _metadata_connection.get()
+            if conn is None:
+                raise RuntimeError("Metadata SQL connection is not available")
+            return conn
 
     conn = _data_connection.get()
     if conn is None:
@@ -104,7 +141,7 @@ def request_connections(request: Request | None = None) -> Iterator[None]:
     connect_started = time.perf_counter()
     metadata_conn = get_connection(as_service_principal=True)
     user_token = auth.resolve_data_access_token(request)
-    data_conn = get_connection(access_token=user_token) if user_token else None
+    data_conn = _open_user_data_connection(user_token) if user_token else None
     if timer is not None:
         timer.add_phase("db_connect_ms", (time.perf_counter() - connect_started) * 1000)
 
