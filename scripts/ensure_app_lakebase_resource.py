@@ -99,15 +99,52 @@ def main() -> int:
         client_kwargs["profile"] = args.profile
 
     client = WorkspaceClient(**client_kwargs)
+
+    sql_warehouse_only = [
+        AppResource(
+            name="sql-warehouse",
+            sql_warehouse=AppResourceSqlWarehouse(
+                id=args.warehouse_id,
+                permission=AppResourceSqlWarehouseSqlWarehousePermission.CAN_USE,
+            ),
+        ),
+    ]
+
     print(
         f"==> Ensuring Lakebase database app resource on {args.app_name!r} "
         f"(branch={args.lakebase_branch!r})..."
     )
-    update = client.apps.create_update_and_wait(
-        app_name=args.app_name,
-        update_mask="resources",
-        app=App(name=args.app_name, resources=resources),
-    )
+    try:
+        update = client.apps.create_update_and_wait(
+            app_name=args.app_name,
+            update_mask="resources",
+            app=App(name=args.app_name, resources=resources),
+        )
+    except Exception as exc:
+        err = str(exc)
+        lakebase_missing = (
+            "does not exist" in err.lower()
+            or "not found" in err.lower()
+            or "NotFound" in type(exc).__name__
+        )
+        if not lakebase_missing:
+            raise
+        print(
+            "WARN: Lakebase branch/database not found in this workspace; "
+            "attaching sql-warehouse only.",
+            file=sys.stderr,
+        )
+        print(
+            "      Create the Lakebase project or set ENSURE_LAKEBASE_APP_RESOURCE=false "
+            "in .env to skip. See docs/LAKEBASE.md.",
+            file=sys.stderr,
+        )
+        update = client.apps.create_update_and_wait(
+            app_name=args.app_name,
+            update_mask="resources",
+            app=App(name=args.app_name, resources=sql_warehouse_only),
+        )
+
     state = update.status.state.value if update.status and update.status.state else "UNKNOWN"
     message = update.status.message if update.status else ""
     print(f"==> App resource update: {state} — {message}")
