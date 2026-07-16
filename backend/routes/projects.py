@@ -6,7 +6,7 @@ from backend import audit_repository, config, repository
 from backend import auth, lookup_repository
 from backend.csv_util import parse_records_csv, records_to_csv
 from backend.deps import assert_role, project_to_summary, require_role
-from backend.sql_util import request_connection
+from backend.sql_util import request_connection, request_connections
 from backend.validation import build_lookup_allowed, validate_record_values
 from backend.timing import track_request
 from backend.models import (
@@ -169,7 +169,7 @@ def create_project(body: CreateProjectRequest, request: Request):
                 detail="record_key_column is required when using an existing UC table",
             )
 
-    with request_connection():
+    with request_connections(request):
         project = repository.create_project(
             name=body.name.strip(),
             description=body.description,
@@ -336,7 +336,7 @@ def publish_project(project_id: str, request: Request, background_tasks: Backgro
     user, role = require_role(project_id, request, "admin")
     with track_request("projects.publish") as timer:
         try:
-            with request_connection():
+            with request_connections(request):
                 repository.publish_project(project_id, user)
                 timer.mark("publish_ms")
         except ValueError as exc:
@@ -373,7 +373,7 @@ def list_records(
     offset: int = Query(0, ge=0),
 ):
     with track_request("records.list") as timer:
-        with request_connection():
+        with request_connections(request):
             email = auth.get_user_email(request)
             project, role = repository.get_project_with_member(project_id, email)
             timer.mark("auth_project_ms")
@@ -408,7 +408,7 @@ def list_records(
 @router.post("/{project_id}/records", response_model=RecordRow, status_code=201)
 def create_record(project_id: str, body: CreateRecordRequest, request: Request, response: Response):
     with track_request("records.create") as timer:
-        with request_connection():
+        with request_connections(request):
             email = auth.get_user_email(request)
             project, role = repository.get_project_with_member(project_id, email)
             timer.mark("auth_project_ms")
@@ -458,7 +458,7 @@ def create_record(project_id: str, body: CreateRecordRequest, request: Request, 
 
 @router.patch("/{project_id}/records/{record_id}", response_model=RecordRow)
 def update_record(project_id: str, record_id: str, body: UpdateRecordRequest, request: Request):
-    with request_connection():
+    with request_connections(request):
         user, _ = require_role(project_id, request, "editor")
         project = repository.get_project(project_id)
         if not project:
@@ -485,7 +485,7 @@ def update_record(project_id: str, record_id: str, body: UpdateRecordRequest, re
 
 @router.delete("/{project_id}/records/{record_id}", status_code=204)
 def delete_record(project_id: str, record_id: str, request: Request):
-    with request_connection():
+    with request_connections(request):
         user, _ = require_role(project_id, request, "editor")
         project = repository.get_project(project_id)
         if not project:
@@ -505,7 +505,7 @@ def delete_record(project_id: str, record_id: str, request: Request):
 
 @router.post("/{project_id}/records/sync-to-uc", response_model=SyncStagedRecordsResult)
 def sync_staged_records(project_id: str, request: Request):
-    with request_connection():
+    with request_connections(request):
         user, _ = require_role(project_id, request, "editor")
         project = repository.get_project(project_id)
         if not project:
@@ -530,14 +530,15 @@ def _field_label_map(fields: list[FieldDefinition]) -> dict[str, str]:
 @router.get("/{project_id}/records/{record_id}/audit", response_model=list[RecordAuditEntry])
 def get_record_audit(project_id: str, record_id: str, request: Request):
     require_role(project_id, request, "reader")
-    project = repository.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    fields = repository.list_fields(project_id, published_only=True)
-    if not repository.get_record(project, fields, record_id):
-        raise HTTPException(status_code=404, detail="Record not found")
-    labels = _field_label_map(fields)
-    rows = audit_repository.list_record_audit(project_id, record_id)
+    with request_connections(request):
+        project = repository.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        fields = repository.list_fields(project_id, published_only=True)
+        if not repository.get_record(project, fields, record_id):
+            raise HTTPException(status_code=404, detail="Record not found")
+        labels = _field_label_map(fields)
+        rows = audit_repository.list_record_audit(project_id, record_id)
     return [
         RecordAuditEntry(
             field_key=row.get("field_key"),
@@ -554,13 +555,14 @@ def get_record_audit(project_id: str, record_id: str, request: Request):
 @router.get("/{project_id}/records/export")
 def export_records(project_id: str, request: Request):
     require_role(project_id, request, "reader")
-    project = repository.get_project(project_id)
-    if not project or project["status"] != "published":
-        raise HTTPException(status_code=400, detail="Project must be published to export records")
-    fields = repository.list_fields(project_id, published_only=True)
-    field_keys = [f.field_key for f in fields]
-    rows = repository.list_records(project, fields, limit=5000)
-    csv_text = records_to_csv(field_keys, rows)
+    with request_connections(request):
+        project = repository.get_project(project_id)
+        if not project or project["status"] != "published":
+            raise HTTPException(status_code=400, detail="Project must be published to export records")
+        fields = repository.list_fields(project_id, published_only=True)
+        field_keys = [f.field_key for f in fields]
+        rows = repository.list_records(project, fields, limit=5000)
+        csv_text = records_to_csv(field_keys, rows)
     filename = f"{project['slug']}_records.csv"
     return Response(
         content=csv_text,
@@ -572,25 +574,26 @@ def export_records(project_id: str, request: Request):
 @router.post("/{project_id}/records/import", response_model=ImportRecordsResult)
 def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Request):
     user, _ = require_role(project_id, request, "editor")
-    project = repository.get_project(project_id)
-    if not project or project["status"] != "published":
-        raise HTTPException(status_code=400, detail="Project must be published before importing records")
-    fields = repository.list_fields(project_id, published_only=True)
-    field_keys = [f.field_key for f in fields]
-    try:
-        parsed = parse_records_csv(body.csv, field_keys)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with request_connections(request):
+        project = repository.get_project(project_id)
+        if not project or project["status"] != "published":
+            raise HTTPException(status_code=400, detail="Project must be published before importing records")
+        fields = repository.list_fields(project_id, published_only=True)
+        field_keys = [f.field_key for f in fields]
+        try:
+            parsed = parse_records_csv(body.csv, field_keys)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    lookup_allowed = build_lookup_allowed(fields, project_id)
-    created = 0
-    failed: list[ImportRecordError] = []
-    for row_num, values in enumerate(parsed, start=2):
-        errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
-        if errors:
-            failed.append(ImportRecordError(row=row_num, field_errors=errors))
-            continue
-        row = repository.create_record(project, fields, values, user)
-        audit_repository.log_record_created(project_id, row["record_id"], values, changed_by=user)
-        created += 1
+        lookup_allowed = build_lookup_allowed(fields, project_id)
+        created = 0
+        failed: list[ImportRecordError] = []
+        for row_num, values in enumerate(parsed, start=2):
+            errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
+            if errors:
+                failed.append(ImportRecordError(row=row_num, field_errors=errors))
+                continue
+            row = repository.create_record(project, fields, values, user)
+            audit_repository.log_record_created(project_id, row["record_id"], values, changed_by=user)
+            created += 1
     return ImportRecordsResult(created=created, failed=failed)

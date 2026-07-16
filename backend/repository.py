@@ -10,7 +10,14 @@ from typing import Any, Optional
 
 from backend import config
 from backend.models import FieldDefinition, ProjectMember, ProjectRole
-from backend.sql_util import execute, fetchall, fetchone
+from backend.sql_util import (
+    data_execute,
+    data_fetchall,
+    data_fetchone,
+    execute,
+    fetchall,
+    fetchone,
+)
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -308,7 +315,7 @@ def _sql_type(field_type: str) -> str:
 
 
 def _describe_column_names(data_table: str) -> set[str]:
-    rows = fetchall(f"DESCRIBE TABLE {data_table}")
+    rows = data_fetchall(f"DESCRIBE TABLE {data_table}")
     names: set[str] = set()
     for row in rows:
         name = str(row.get("col_name") or row.get("column_name") or "").strip()
@@ -341,11 +348,11 @@ def _ensure_audit_columns(
     ]
     if missing:
         cols_sql = ", ".join(f"{_quote_col(name)} {col_type}" for name, col_type in missing)
-        execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
+        data_execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
         for col_name, _ in missing:
             existing.add(col_name.lower())
     if include_record_id:
-        execute(
+        data_execute(
             f"UPDATE {data_table} SET {_quote_col('_record_id')} = uuid() "
             f"WHERE {_quote_col('_record_id')} IS NULL OR {_quote_col('_record_id')} = ''"
         )
@@ -387,7 +394,7 @@ def _add_missing_field_columns(
         for field in missing_fields
     )
     try:
-        execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
+        data_execute(f"ALTER TABLE {data_table} ADD COLUMNS ({cols_sql})")
     except Exception as exc:
         msg = str(exc).lower()
         if "already exists" not in msg and "duplicate" not in msg:
@@ -538,7 +545,7 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
             for field in draft_fields:
                 columns.append(f"{quote_identifier(field.field_key)} {_sql_type(field.field_type)}")
 
-            execute(f"CREATE TABLE IF NOT EXISTS {data_table} ({', '.join(columns)}) USING DELTA")
+            data_execute(f"CREATE TABLE IF NOT EXISTS {data_table} ({', '.join(columns)}) USING DELTA")
         else:
             _ensure_app_metadata_columns(data_table, existing=existing_cols)
             _add_missing_field_columns(data_table, draft_fields, previous_keys, existing_cols)
@@ -622,7 +629,7 @@ def _list_records_from_uc(
         f"SELECT {', '.join(select_parts)} FROM {data_table} "
         f"ORDER BY {order} LIMIT {safe_limit} OFFSET {safe_offset}"
     )
-    rows = fetchall(sql)
+    rows = data_fetchall(sql)
     return [_row_to_record(row, fields, record_key_col) for row in rows]
 
 
@@ -670,7 +677,7 @@ def _get_record_from_uc(
     if not select_parts:
         return None
     where_sql, params = _record_where_clause(record_key_col, record_id)
-    row = fetchone(
+    row = data_fetchone(
         f"SELECT {', '.join(select_parts)} FROM {data_table} WHERE {where_sql}",
         params,
     )
@@ -704,12 +711,12 @@ def _assert_record_id_available(
         record_key_col = _record_key_column(project)
         if record_key_col:
             key_sql = _quote_col(record_key_col)
-            dup = fetchone(
+            dup = data_fetchone(
                 f"SELECT 1 AS found FROM {data_table} WHERE {key_sql} = ?",
                 (record_id,),
             )
         else:
-            dup = fetchone(
+            dup = data_fetchone(
                 f"SELECT 1 AS found FROM {data_table} WHERE {_quote_col('_record_id')} = ?",
                 (record_id,),
             )
@@ -726,7 +733,7 @@ def _record_exists_in_uc(project: dict[str, Any], record_id: str) -> bool:
     data_table = _data_table_fqn(project)
     record_key_col = _record_key_column(project)
     where_sql, params = _record_where_clause(record_key_col, record_id)
-    row = fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
+    row = data_fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
     return row is not None
 
 
@@ -813,7 +820,7 @@ def _insert_record_to_uc(
 
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
-    execute(f"INSERT INTO {data_table} ({col_sql}) VALUES ({placeholders})", vals)
+    data_execute(f"INSERT INTO {data_table} ({col_sql}) VALUES ({placeholders})", vals)
     return {
         "record_id": record_id,
         "values": values,
@@ -886,7 +893,7 @@ def _update_record_in_uc(
         return
     where_sql, where_params = _record_where_clause(record_key_col, record_id)
     params.extend(where_params)
-    execute(f"UPDATE {data_table} SET {', '.join(sets)} WHERE {where_sql}", params)
+    data_execute(f"UPDATE {data_table} SET {', '.join(sets)} WHERE {where_sql}", params)
 
 
 def delete_record(project: dict[str, Any], record_id: str, user_email: str) -> bool:
@@ -920,10 +927,10 @@ def _delete_record_from_uc(project: dict[str, Any], record_id: str) -> bool:
     data_table = _data_table_fqn(project)
     record_key_col = _record_key_column(project)
     where_sql, params = _record_where_clause(record_key_col, record_id)
-    existing = fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
+    existing = data_fetchone(f"SELECT 1 AS found FROM {data_table} WHERE {where_sql}", params)
     if not existing:
         return False
-    execute(f"DELETE FROM {data_table} WHERE {where_sql}", params)
+    data_execute(f"DELETE FROM {data_table} WHERE {where_sql}", params)
     return True
 
 

@@ -2,12 +2,13 @@ from pathlib import Path
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.routes import ai, genie, health, lookups, me, projects, uc
+from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,6 +34,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Data Collector API", lifespan=lifespan)
+
+
+@app.exception_handler(SqlPermissionError)
+async def sql_permission_handler(_request: Request, exc: SqlPermissionError):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(UserAuthorizationRequiredError)
+async def user_auth_required_handler(_request: Request, exc: UserAuthorizationRequiredError):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
 
 app.add_middleware(
     CORSMiddleware,

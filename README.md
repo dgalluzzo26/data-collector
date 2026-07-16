@@ -250,9 +250,24 @@ The script will:
 
 ### 3. Grant Unity Catalog permissions (required)
 
-The deployed app runs as a **service principal**, not your user token. Without UC grants, `/api/projects` returns **Internal Server Error** (`USE CATALOG` denied).
+The deployed app uses **two identities**:
 
-**Find the service principal client id:**
+| Layer | Identity | UC access |
+|-------|----------|-----------|
+| App metadata (projects, fields, members, lookups) | **Service principal** | Metadata schema only |
+| Collection data (records, UC table bind/preview, existing-UC writes) | **Signed-in user** (on-behalf-of) | User's existing UC grants |
+
+Without service-principal grants on the metadata schema, `/api/projects` returns **Internal Server Error** (`USE CATALOG` denied).
+
+**Enable user authorization on the app** (required for record writes and UC schema/table pickers):
+
+1. **Compute → Apps →** your app → **Edit**
+2. Under **User authorization**, enable it and add the **`sql`** scope
+3. **Stop and restart** the app after changing scopes
+
+Databricks forwards the user's short-lived token in the `X-Forwarded-Access-Token` header. The app uses it for all Unity Catalog **data-plane** SQL so row/column policies and table grants apply per user.
+
+**Find the service principal client id** (metadata only):
 
 1. **Compute → Apps →** your app (e.g. `data-collector-prod`)
 2. Open the **Authorization** or app details tab
@@ -268,15 +283,13 @@ databricks apps get data-collector-prod -p data-collector -o json \
 **Run grants in a SQL warehouse** (replace catalog/schema and principal id):
 
 ```sql
--- App metadata schema (projects, fields, members, lookups)
+-- App metadata schema only (projects, fields, members, lookups, staged changes)
 GRANT USE CATALOG ON CATALOG serverless_stable_tgnklq_catalog TO `<service-principal-client-id>`;
 GRANT USE SCHEMA ON SCHEMA serverless_stable_tgnklq_catalog.data_collector TO `<service-principal-client-id>`;
 GRANT SELECT, MODIFY ON SCHEMA serverless_stable_tgnklq_catalog.data_collector TO `<service-principal-client-id>`;
-
--- Collection data schemas (repeat for each schema that holds published record tables)
-GRANT USE SCHEMA ON SCHEMA serverless_stable_tgnklq_catalog.openfema TO `<service-principal-client-id>`;
-GRANT SELECT, MODIFY ON SCHEMA serverless_stable_tgnklq_catalog.openfema TO `<service-principal-client-id>`;
 ```
+
+Collection **data tables** do not need grants on the service principal — each user needs their own UC grants on the target schemas/tables. Users also need **CAN USE** on the SQL warehouse attached to the app.
 
 Use the **client id UUID** in backticks — the display name (`app-xxxxx data-collector-prod`) often fails in `GRANT` statements.
 
@@ -314,7 +327,8 @@ See [docs/LAKEBASE.md](docs/LAKEBASE.md) for local dev connection vars and limit
 
 | Step | Verify |
 |------|--------|
-| UC grants on metadata schema | Collections page loads (no Internal Server Error) |
+| UC grants on metadata schema (service principal) | Collections page loads (no Internal Server Error) |
+| User authorization + `sql` scope enabled | UC schema/table dropdowns and record writes respect user permissions |
 | App permissions for your user | You can open the app URL |
 | SQL warehouse bound | Settings shows warehouse id / `db_status: ok` |
 | Lakebase resource (if used) | Settings shows `Lakebase configured: yes` |
@@ -328,7 +342,8 @@ For local dev, set `DEV_USER_EMAIL=you@company.com` in `.env` so collections mat
 |---------|-----|
 | `CLI_ARGS unbound variable` on macOS | Fixed in `deploy.sh` — pull latest |
 | `openpgp: key expired` on bundle deploy | Upgrade Databricks CLI or use system Terraform (`DATABRICKS_TF_EXEC_PATH`) |
-| Internal Server Error on Collections | UC grants for service principal client id |
+| Internal Server Error on Collections | UC grants for service principal on metadata schema |
+| 403 on record save / UC schema list | Enable User authorization + `sql` scope; grant user UC access on target tables |
 | Empty collections in prod | Add your email to `project_members` or set `DEV_USER_EMAIL` locally |
 | Lakebase option fails on create | Redeploy with latest `deploy.sh` (auto re-attaches database); check Settings |
 

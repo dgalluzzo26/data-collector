@@ -6,7 +6,7 @@ from typing import Any
 
 from backend import config
 from backend.models import FieldDefinition, LookupColumn
-from backend.sql_util import fetchall, fetchone
+from backend.sql_util import data_fetchall, data_fetchone
 
 
 def _table_fqn(catalog: str, schema: str, table: str) -> str:
@@ -32,7 +32,7 @@ def list_schemas(catalog: str) -> list[str]:
     """List schemas in a Unity Catalog catalog."""
     config.validate_identifier(catalog, "catalog")
     catalog_sql = config.quote_identifier(catalog)
-    rows = fetchall(f"SHOW SCHEMAS IN {catalog_sql}")
+    rows = data_fetchall(f"SHOW SCHEMAS IN {catalog_sql}")
     names = sorted(
         {
             name
@@ -47,7 +47,7 @@ def list_tables(catalog: str, schema: str) -> list[str]:
     """List tables in a Unity Catalog schema."""
     config.validate_identifier(catalog, "catalog")
     config.validate_identifier(schema, "schema")
-    rows = fetchall(f"SHOW TABLES IN {_schema_fqn(catalog, schema)}")
+    rows = data_fetchall(f"SHOW TABLES IN {_schema_fqn(catalog, schema)}")
     names = sorted(
         {
             name
@@ -65,7 +65,7 @@ def describe_table_columns(catalog: str, schema: str, table: str) -> list[Lookup
     config.validate_identifier(table, "table")
 
     fqn = _table_fqn(catalog, schema, table)
-    rows = fetchall(f"DESCRIBE TABLE {fqn}")
+    rows = data_fetchall(f"DESCRIBE TABLE {fqn}")
     columns: list[LookupColumn] = []
     seen: set[str] = set()
     for row in rows:
@@ -95,14 +95,14 @@ def describe_table_columns(catalog: str, schema: str, table: str) -> list[Lookup
 
 def count_table_rows(catalog: str, schema: str, table: str) -> int:
     fqn = _table_fqn(catalog, schema, table)
-    row = fetchone(f"SELECT COUNT(*) AS cnt FROM {fqn}")
+    row = data_fetchone(f"SELECT COUNT(*) AS cnt FROM {fqn}")
     return int(row["cnt"]) if row else 0
 
 
 def approximate_row_count(catalog: str, schema: str, table: str, *, cap: int = 100_001) -> int:
     """Fast row estimate for UI preview — capped to avoid full-table scans."""
     fqn = _table_fqn(catalog, schema, table)
-    row = fetchone(f"SELECT COUNT(*) AS cnt FROM (SELECT 1 FROM {fqn} LIMIT {int(cap)}) t")
+    row = data_fetchone(f"SELECT COUNT(*) AS cnt FROM (SELECT 1 FROM {fqn} LIMIT {int(cap)}) t")
     return int(row["cnt"]) if row else 0
 
 
@@ -118,7 +118,7 @@ def fetch_table_rows(
         return []
     fqn = _table_fqn(catalog, schema, table)
     col_sql = ", ".join(config.quote_identifier(k) for k in column_keys)
-    return fetchall(f"SELECT {col_sql} FROM {fqn} LIMIT {int(limit)}")
+    return data_fetchall(f"SELECT {col_sql} FROM {fqn} LIMIT {int(limit)}")
 
 
 def preview_uc_table(
