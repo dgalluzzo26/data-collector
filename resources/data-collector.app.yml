@@ -5,6 +5,10 @@ resources:
       description: "Data Collector — forms, lookups, and UC-backed collections (${bundle.target})"
       # Source is the repo root (app.yaml, backend/, dist/).
       source_code_path: ..
+      # On-behalf-of SQL for existing UC collections (hybrid / user_obo). Survives bundle deploy.
+      user_api_scopes:
+        - sql
+        - sql.warehouses
       resources:
         - name: sql-warehouse
           sql_warehouse:

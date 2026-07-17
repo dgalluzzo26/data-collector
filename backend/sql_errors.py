@@ -25,6 +25,16 @@ class UserAuthorizationRequiredError(Exception):
         super().__init__(message)
 
 
+def is_table_not_found(exc: Exception) -> bool:
+    msg = str(exc).upper()
+    return (
+        "TABLE_OR_VIEW_NOT_FOUND" in msg
+        or "TABLE_OR_VIEW_CANNOT_BE_FOUND" in msg
+        or "NO_SUCH_TABLE" in msg
+        or ("DOES NOT EXIST" in msg and "TABLE" in msg)
+    )
+
+
 def is_permission_denied(exc: Exception) -> bool:
     msg = str(exc).upper()
     return (

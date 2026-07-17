@@ -298,6 +298,10 @@ Without service-principal grants on the metadata schema, `/api/projects` returns
 
 **Enable user authorization on the app** (required for **existing-UC collection data** in hybrid mode, and for all data access in `user_obo` mode):
 
+Bundle deploy sets the **`sql`** scope via `user_api_scopes` in `resources/data-collector.app.yml`. After deploy, **stop and restart** the app (`databricks bundle run` or the Apps UI). Users may need to re-open the app and approve the scope.
+
+If you created the app outside the bundle, you can also set scopes in the UI:
+
 1. **Compute → Apps →** your app → **Edit**
 2. Under **User authorization**, enable it and add the **`sql`** scope
 3. **Stop and restart** the app after changing scopes

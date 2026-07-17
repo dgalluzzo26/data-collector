@@ -14,7 +14,7 @@ interface DhsSiteHeaderProps {
 }
 
 export default function DhsSiteHeader({
-  appTitle = 'Data Collector',
+  appTitle = 'Brick Constructor',
   agencyName = 'Databricks',
   logoUrl = null,
   tagline,

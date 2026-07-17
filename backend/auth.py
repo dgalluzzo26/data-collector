@@ -1,4 +1,6 @@
 """User identity for Databricks Apps and local development."""
+import base64
+import json
 import os
 import re
 from pathlib import Path
@@ -35,6 +37,25 @@ def get_user_access_token(request: Request) -> str | None:
         if value:
             return value
     return None
+
+
+def jwt_token_scopes(token: str) -> list[str] | None:
+    """Decode OAuth scopes from a JWT payload (diagnostics only; not verified)."""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        scope = data.get("scope") or data.get("scp")
+        if isinstance(scope, str):
+            return [s for s in scope.split() if s]
+        if isinstance(scope, list):
+            return [str(s) for s in scope if s]
+        return []
+    except Exception:
+        return None
 
 
 def resolve_data_access_token(request: Request | None = None) -> str | None:

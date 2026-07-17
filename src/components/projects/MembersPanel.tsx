@@ -110,7 +110,7 @@ export default function MembersPanel({ project, onChanged }: MembersPanelProps) 
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Search workspace users to add. New members are automatically granted Can use on this app when
-        needed. For Unity Catalog collections, the app may also grant UC table access when hybrid mode
+        needed. For Unity Catalog forms, the app may also grant UC table access when hybrid mode
         is enabled.
       </Typography>
 

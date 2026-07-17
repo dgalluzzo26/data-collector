@@ -10,7 +10,7 @@ import Link from '@mui/material/Link';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
-import { api } from '../../api/client';
+import { api, ApiPublishError } from '../../api/client';
 import { useProject } from '../../hooks/useProjects';
 import { designerBaseline, draftFieldsOnly } from '../../lib/designerFields';
 import { showGenieTab } from '../../lib/genie';
@@ -28,7 +28,75 @@ import CollectionAccessDenied from '../common/CollectionAccessDenied';
 
 type TabKey = 'records' | 'designer' | 'lookups' | 'members' | 'settings' | 'genie';
 
+type WorkspaceMessage = {
+  text: string;
+  severity: 'success' | 'error' | 'info';
+  title?: string;
+  grantSql?: string;
+};
+
 const PUBLISH_ACTION_TABS: TabKey[] = ['designer', 'lookups', 'records', 'members', 'settings'];
+
+function WorkspaceMessageBanner({ message }: { message: WorkspaceMessage }) {
+  if (message.severity === 'error') {
+    return (
+      <Box
+        role="alert"
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: 1,
+          border: '2px solid',
+          borderColor: 'error.main',
+          bgcolor: '#fdecea',
+          boxShadow: '0 1px 4px rgba(211, 47, 47, 0.15)',
+        }}
+      >
+        <Typography
+          variant="subtitle1"
+          sx={{ fontWeight: 700, color: 'error.main', mb: message.title ? 0.5 : 0 }}
+        >
+          {message.title ?? 'Something went wrong'}
+        </Typography>
+        <Typography sx={{ fontWeight: 700, color: 'error.dark', lineHeight: 1.5 }}>
+          {message.text}
+        </Typography>
+        {message.grantSql ? (
+          <Box sx={{ mt: 1.5 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: 'error.dark', mb: 0.5 }}>
+              How to fix (verify access, then ask a catalog admin for GRANTs if needed):
+            </Typography>
+            <Box
+              component="pre"
+              sx={{
+                m: 0,
+                p: 1.5,
+                borderRadius: 1,
+                bgcolor: 'background.paper',
+                border: '1px solid',
+                borderColor: 'error.light',
+                fontFamily: 'monospace',
+                fontSize: '0.8rem',
+                lineHeight: 1.45,
+                overflowX: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {message.grantSql}
+            </Box>
+          </Box>
+        ) : null}
+      </Box>
+    );
+  }
+
+  return (
+    <Alert severity={message.severity === 'success' ? 'success' : 'info'} sx={{ mb: 2 }}>
+      {message.text}
+    </Alert>
+  );
+}
 
 export default function ProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -39,7 +107,7 @@ export default function ProjectWorkspace() {
   const [draftFields, setDraftFields] = useState<FieldDefinition[]>([]);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<WorkspaceMessage | null>(null);
 
   const isAdmin = project?.role === 'admin';
   const canEdit = project?.role === 'admin' || project?.role === 'editor';
@@ -77,9 +145,13 @@ export default function ProjectWorkspace() {
       await api.saveFields(project.project_id, designerFields);
       setDraftFields([]);
       await refresh();
-      setMessage('Draft saved.');
+      setMessage({ text: 'Draft saved.', severity: 'success' });
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Save failed');
+      setMessage({
+        text: err instanceof Error ? err.message : 'Save failed',
+        severity: 'error',
+        title: 'Save failed',
+      });
     } finally {
       setSaving(false);
     }
@@ -87,9 +159,11 @@ export default function ProjectWorkspace() {
 
   const publish = async () => {
     if (project.storage_type === 'uc_delta' && !project.record_sync_mode) {
-      setMessage(
-        'Choose how record changes sync to Unity Catalog in Settings before publishing.',
-      );
+      setMessage({
+        title: 'Cannot publish yet',
+        text: 'Choose how record changes sync to Unity Catalog in Settings before publishing.',
+        severity: 'error',
+      });
       setTab('settings');
       return;
     }
@@ -105,7 +179,10 @@ export default function ProjectWorkspace() {
       setTab('records');
       const storageLabel =
         project.storage_type === 'lakebase' ? 'Lakebase Postgres' : 'Unity Catalog';
-      setMessage(`Published to ${storageLabel}.`);
+      setMessage({
+        text: `Published to ${storageLabel}.`,
+        severity: 'success',
+      });
     } catch (err) {
       const timedOut =
         err instanceof Error && err.message.toLowerCase().includes('timed out');
@@ -116,14 +193,22 @@ export default function ProjectWorkspace() {
             setDraftFields([]);
             setTab('records');
             await refresh();
-            setMessage('Publish completed (the request took longer than expected).');
+            setMessage({
+              text: 'Publish completed (the request took longer than expected).',
+              severity: 'success',
+            });
             return;
           }
         } catch {
           // fall through to error message
         }
       }
-      setMessage(err instanceof Error ? err.message : 'Publish failed');
+      setMessage({
+        title: 'Publish failed',
+        text: err instanceof Error ? err.message : 'Publish failed',
+        grantSql: err instanceof ApiPublishError ? err.grantSql : undefined,
+        severity: 'error',
+      });
     } finally {
       setPublishing(false);
     }
@@ -133,7 +218,7 @@ export default function ProjectWorkspace() {
     <Box>
       <Breadcrumbs sx={{ mb: 2 }}>
         <Link component={RouterLink} to="/collections" underline="hover">
-          Collections
+          Forms
         </Link>
         <Typography color="text.primary">{project.name}</Typography>
       </Breadcrumbs>
@@ -184,11 +269,7 @@ export default function ProjectWorkspace() {
         <Tab value="settings" label="Settings" disabled={!isAdmin} />
       </Tabs>
 
-      {message && (
-        <Typography sx={{ mb: 2 }} color="text.secondary">
-          {message}
-        </Typography>
-      )}
+      {message && <WorkspaceMessageBanner message={message} />}
 
       {tab === 'designer' && (
         <Box>
@@ -204,7 +285,7 @@ export default function ProjectWorkspace() {
               onApplied={async () => {
                 setDraftFields([]);
                 await refresh();
-                setMessage('AI changes applied to draft.');
+                setMessage({ text: 'AI changes applied to draft.', severity: 'info' });
               }}
             />
           )}

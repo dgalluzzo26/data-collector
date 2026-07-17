@@ -40,7 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     path: '/collections',
-    label: 'Collections',
+    label: 'Forms',
     icon: <StorageIcon fontSize="small" />,
     match: (p) => p.startsWith('/collections'),
   },
@@ -62,30 +62,30 @@ function resolveHeader(pathname: string) {
   if (pathname.includes('/data')) {
     return {
       title: 'Data entry',
-      tagline: 'View and manage collection records',
+      tagline: 'View and manage form records',
     };
   }
   if (pathname.match(/^\/collections\/[^/]+$/)) {
     return {
-      title: 'Collection workspace',
+      title: 'Form workspace',
       tagline: 'Design forms, manage members, and edit records',
     };
   }
   if (pathname.startsWith('/collections')) {
     return {
-      title: 'Collections',
-      tagline: 'Browse and manage data collection projects',
+      title: 'Forms',
+      tagline: 'Browse and manage data collection forms',
     };
   }
   if (pathname === '/settings') {
     return { title: 'Settings', tagline: 'Databricks workspace and connection configuration' };
   }
   if (pathname === '/help') {
-    return { title: 'Help', tagline: 'How to use the Data Collector application' };
+    return { title: 'Help', tagline: 'How to use Brick Constructor' };
   }
   return {
-    title: 'Data Collector',
-    tagline: 'Ingest, validate, and manage enterprise data collections',
+    title: 'Brick Constructor',
+    tagline: 'Ingest, validate, and manage enterprise data forms',
   };
 }
 
@@ -123,7 +123,7 @@ export default function AppShell() {
             Help
           </Button>
           <Button variant="contained" size="small" startIcon={<StorageIcon />} onClick={() => navigate('/collections')}>
-            Collections
+            Forms
           </Button>
         </>
       );

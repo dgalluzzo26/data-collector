@@ -97,5 +97,5 @@ body.content-theme-dark .page-title {
     document.head.appendChild(el);
   }
   el.textContent = css;
-  document.head.appendChild(el);
+  document.title = branding.app_title || 'Brick Constructor';
 }

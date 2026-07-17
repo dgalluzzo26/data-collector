@@ -32,7 +32,7 @@ export default function DashboardView() {
   return (
     <Box>
       <Typography variant="h4" component="h1" className="page-title" gutterBottom>
-        Welcome to Data Collector
+        Welcome to Brick Constructor
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 3, maxWidth: '42rem' }}>
         Design SharePoint-style lists and Google Forms-style collectors, then store responses
@@ -59,15 +59,15 @@ export default function DashboardView() {
 
       <Paper className="page-card" sx={{ p: 2.5, mb: 2 }}>
         <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-          Your collections
+          Your forms
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           {projects.length === 0
-            ? 'No collections yet — create your first project to start designing a form.'
-            : `${projects.length} collection${projects.length === 1 ? '' : 's'} available.`}
+            ? 'No forms yet — create your first form to start designing fields.'
+            : `${projects.length} form${projects.length === 1 ? '' : 's'} available.`}
         </Typography>
         <Button component={RouterLink} to="/collections" variant="contained">
-          Open collections
+          Open forms
         </Button>
       </Paper>
 

@@ -50,6 +50,16 @@ export class ApiAccessDeniedError extends Error {
   }
 }
 
+export class ApiPublishError extends Error {
+  grantSql?: string;
+
+  constructor(message: string, grantSql?: string) {
+    super(message);
+    this.name = 'ApiPublishError';
+    this.grantSql = grantSql;
+  }
+}
+
 type ApiErrorDetail =
   | string
   | {
@@ -57,6 +67,7 @@ type ApiErrorDetail =
       field_errors?: Record<string, string>;
       collection_name?: string;
       admin_emails?: string[];
+      grant_sql?: string;
     };
 
 function parseApiError(status: number, text: string): Error {
@@ -75,6 +86,9 @@ function parseApiError(status: number, text: string): Error {
         );
       }
       if (detail.message) {
+        if (detail.grant_sql) {
+          return new ApiPublishError(detail.message, detail.grant_sql);
+        }
         return new Error(detail.message);
       }
     }
@@ -82,7 +96,11 @@ function parseApiError(status: number, text: string): Error {
       return new Error(detail);
     }
   } catch (err) {
-    if (err instanceof ApiValidationError || err instanceof ApiAccessDeniedError) {
+    if (
+      err instanceof ApiValidationError ||
+      err instanceof ApiAccessDeniedError ||
+      err instanceof ApiPublishError
+    ) {
       throw err;
     }
   }
@@ -163,12 +181,12 @@ export const api = {
       120_000,
     ),
 
-  listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading collections…'),
+  listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading forms…'),
   createProject: (body: CreateProjectPayload) =>
     request<ProjectDetail>(
       '/projects',
       { method: 'POST', body: JSON.stringify(body) },
-      'Creating collection…',
+      'Creating form…',
       120_000,
     ),
   getProject: (id: string) =>
@@ -176,7 +194,7 @@ export const api = {
   updateProject: (id: string, body: Partial<CreateProjectPayload>) =>
     request<ProjectDetail>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, 'Saving…'),
   deleteProject: (id: string) =>
-    request<void>(`/projects/${id}`, { method: 'DELETE' }, 'Deleting collection…'),
+    request<void>(`/projects/${id}`, { method: 'DELETE' }, 'Deleting form…'),
 
   listMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`, undefined, 'Loading members…'),
   searchWorkspaceUsers: (id: string, q: string) =>
@@ -356,7 +374,7 @@ export const api = {
     request<ProjectDetail>(
       '/ai/create-from-proposal',
       { method: 'POST', body: JSON.stringify({ proposal }) },
-      'Creating collection…',
+      'Creating form…',
       120_000,
     ),
   generateLookup: (projectId: string, prompt: string) =>

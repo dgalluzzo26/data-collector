@@ -10,6 +10,11 @@ from typing import Any, Optional
 
 from backend import config
 from backend.models import FieldDefinition, ProjectMember, ProjectRole
+from backend.sql_errors import (
+    SqlPermissionError,
+    UserAuthorizationRequiredError,
+    is_table_not_found,
+)
 from backend.sql_util import (
     data_execute,
     data_fetchall,
@@ -394,8 +399,12 @@ def _ensure_app_metadata_columns(
 def _try_describe_column_names(data_table: str) -> Optional[set[str]]:
     try:
         return _describe_column_names(data_table)
-    except Exception:
-        return None
+    except (SqlPermissionError, UserAuthorizationRequiredError):
+        raise
+    except Exception as exc:
+        if is_table_not_found(exc):
+            return None
+        raise
 
 
 def _add_missing_field_columns(
@@ -555,7 +564,8 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
             if _is_existing_uc(project):
                 if existing_cols is None:
                     raise ValueError(
-                        f"Table {catalog}.{schema}.{table} does not exist"
+                        f"Table {catalog}.{schema}.{table} does not exist or is not visible "
+                        f"with your Unity Catalog permissions."
                     )
                 _ensure_audit_columns(data_table, include_record_id=False, existing=existing_cols)
                 _add_missing_field_columns(data_table, draft_fields, previous_keys, existing_cols)

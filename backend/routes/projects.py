@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 
-from backend import audit_repository, config, repository
+from backend import audit_repository, config, repository, uc_grants
 from backend import auth, lookup_repository
 from backend.csv_util import parse_records_csv, records_to_csv
 from backend.deps import assert_role, project_to_summary, require_role
+from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
 from backend.validation import build_lookup_allowed, validate_record_values
 from backend.timing import track_request
@@ -356,6 +357,35 @@ def save_fields(project_id: str, body: SaveFieldsRequest, request: Request):
     return repository.list_fields(project_id)
 
 
+def _publish_permission_detail(
+    project_id: str,
+    user: str,
+    message: str,
+    *,
+    failure_kind: uc_grants.PublishFailureKind = "generic",
+) -> dict[str, str]:
+    project = repository.get_project(project_id)
+    detail: dict[str, str] = {"message": message}
+    if project and project.get("storage_type") == "uc_delta":
+        grant_sql = uc_grants.grant_sql_for_publish_failure(
+            project,
+            user,
+            failure_kind=failure_kind,
+        )
+        if grant_sql:
+            detail["grant_sql"] = grant_sql
+    return detail
+
+
+def _is_publish_permission_failure(exc: ValueError) -> bool:
+    msg = str(exc).lower()
+    return (
+        "does not exist or is not visible" in msg
+        or "permission" in msg
+        or "unity catalog" in msg
+    )
+
+
 @router.post("/{project_id}/publish", response_model=ProjectDetail)
 def publish_project(project_id: str, request: Request, background_tasks: BackgroundTasks):
     user, role = require_role(project_id, request, "admin")
@@ -364,7 +394,37 @@ def publish_project(project_id: str, request: Request, background_tasks: Backgro
             with request_connections(request):
                 repository.publish_project(project_id, user)
                 timer.mark("publish_ms")
+        except SqlPermissionError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail=_publish_permission_detail(
+                    project_id,
+                    user,
+                    str(exc),
+                    failure_kind="permission_denied",
+                ),
+            ) from exc
+        except UserAuthorizationRequiredError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail=_publish_permission_detail(
+                    project_id,
+                    user,
+                    str(exc),
+                    failure_kind="user_authorization",
+                ),
+            ) from exc
         except ValueError as exc:
+            if _is_publish_permission_failure(exc):
+                raise HTTPException(
+                    status_code=400,
+                    detail=_publish_permission_detail(
+                        project_id,
+                        user,
+                        str(exc),
+                        failure_kind="table_not_visible",
+                    ),
+                ) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         from backend import genie_service
 

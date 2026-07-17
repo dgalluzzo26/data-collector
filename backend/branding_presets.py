@@ -127,7 +127,7 @@ def palette_branding(preset_id: str) -> dict[str, Any]:
         else "Databricks"
     )
     return {
-        "app_title": "Data Collector",
+        "app_title": "Brick Constructor",
         "agency_name": agency,
         "logo_data_url": None,
         "chrome": preset["chrome"],

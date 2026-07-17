@@ -197,7 +197,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
           fullWidth
           sx={{ mb: 2 }}
           disabled={!appConfig}
-          helperText="Choose where collection records are stored. You can change this until you publish."
+          helperText="Choose where form records are stored. You can change this until you publish."
         >
           <MenuItem value="uc_delta">Unity Catalog (Delta)</MenuItem>
           <MenuItem value="lakebase" disabled={!lakebaseConfigured}>
@@ -229,7 +229,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
             isLakebase
               ? 'Lakebase database (from app resource)'
               : isDraft
-                ? `Default for new collections: ${appConfig?.default_data_catalog || '…'}`
+                ? `Default for new forms: ${appConfig?.default_data_catalog || '…'}`
                 : undefined
           }
           size="small"
@@ -243,7 +243,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
             isDraft
               ? isLakebase
                 ? 'Postgres schema (created on publish if missing)'
-                : `Default for new collections: ${appConfig?.default_data_schema || '…'}`
+                : `Default for new forms: ${appConfig?.default_data_schema || '…'}`
               : undefined
           }
           size="small"

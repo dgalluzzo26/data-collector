@@ -19,7 +19,7 @@ def health(request: Request):
 
     try:
         from backend.db import resolve_warehouse_http_path
-        from backend.sql_util import fetchone
+        from backend.sql_util import diagnose_user_data_sql, fetchone
 
         warehouse_path = resolve_warehouse_http_path()
         fetchone("SELECT 1 AS ok")
@@ -27,6 +27,8 @@ def health(request: Request):
     except Exception as exc:
         db_status = "error"
         db_error = str(exc)
+
+    user_data = diagnose_user_data_sql(request)
 
     return {
         "status": "ok",
@@ -47,4 +49,5 @@ def health(request: Request):
         "lakebase_database": lakebase_config.database_name() if lakebase_config.is_configured() else None,
         "lakebase_default_schema": lakebase_config.default_schema(),
         "uc_data_access_mode": get_uc_data_access_mode(),
+        **user_data,
     }

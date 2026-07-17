@@ -29,7 +29,9 @@ def _is_managed_uc(project: dict[str, Any]) -> bool:
 
 def use_user_token_for_uc_browse() -> bool:
     """True when UC schema/table pickers should run as the signed-in user."""
-    return get_uc_data_access_mode() == "user_obo"
+    mode = get_uc_data_access_mode()
+    # hybrid: browse and existing-UC publish both use the user token.
+    return mode in ("user_obo", "hybrid")
 
 
 def use_user_token_for_project(project: dict[str, Any]) -> bool:

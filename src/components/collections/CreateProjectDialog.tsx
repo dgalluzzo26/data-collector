@@ -210,7 +210,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
-      <DialogTitle>New data collection</DialogTitle>
+      <DialogTitle>New form</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
         <TextField
           label="Name"
