@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
+import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -15,10 +18,23 @@ import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import type { FieldDefinition, StorageType, UcTablePreview } from '../../types';
+import { readCsvFile, stageCsvForImport } from '../../lib/csvFile';
+import type {
+  CsvFormPreview,
+  FieldDefinition,
+  FieldType,
+  InferredColumn,
+  StorageType,
+  UcTablePreview,
+} from '../../types';
 import BusyButton from '../common/BusyButton';
 import UcTableSelector from '../common/UcTableSelector';
 
@@ -28,7 +44,19 @@ interface CreateProjectDialogProps {
   onCreated: () => void;
 }
 
-type CreationMode = 'new_table' | 'existing_uc_table';
+type CreationMode = 'new_table' | 'existing_uc_table' | 'import_csv';
+
+const CSV_FIELD_TYPES: { value: FieldType; label: string }[] = [
+  { value: 'text', label: 'Text' },
+  { value: 'textarea', label: 'Long text' },
+  { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' },
+  { value: 'datetime', label: 'Date & time' },
+  { value: 'boolean', label: 'Yes / No' },
+  { value: 'single_select', label: 'Dropdown' },
+  { value: 'email', label: 'Email' },
+  { value: 'url', label: 'URL' },
+];
 
 function buildSeedFields(
   preview: UcTablePreview,
@@ -55,12 +83,124 @@ function buildSeedFields(
   return fields;
 }
 
+function buildCsvSeedFields(
+  columns: InferredColumn[],
+  selectedKeys: Set<string>,
+  recordKeyColumn: string,
+): FieldDefinition[] {
+  const fields: FieldDefinition[] = [];
+  let sortOrder = 0;
+  for (const col of columns) {
+    if (!selectedKeys.has(col.field_key) && col.field_key !== recordKeyColumn) continue;
+    fields.push({
+      field_key: col.field_key,
+      label: col.label,
+      field_type: col.field_type,
+      sort_order: sortOrder,
+      is_required: col.field_key === recordKeyColumn,
+      config_json:
+        col.field_key === recordKeyColumn ? { is_record_key: true } : col.config_json ?? undefined,
+      schema_version: 0,
+      is_published: false,
+    });
+    sortOrder += 1;
+  }
+  return fields;
+}
+
 function guessRecordKeyColumn(keys: string[]): string {
   const idLike = keys.find((k) => /(^id$|_id$|^.*_key$)/i.test(k));
   return idLike ?? keys[0] ?? '';
 }
 
+function StorageFields({
+  storageType,
+  setStorageType,
+  showStorage,
+  setShowStorage,
+  targetCatalog,
+  setTargetCatalog,
+  targetSchema,
+  setTargetSchema,
+  targetTable,
+  setTargetTable,
+  defaultCatalog,
+  defaultSchema,
+  name,
+  slugTableName,
+}: {
+  storageType: StorageType;
+  setStorageType: (v: StorageType) => void;
+  showStorage: boolean;
+  setShowStorage: (v: boolean | ((prev: boolean) => boolean)) => void;
+  targetCatalog: string;
+  setTargetCatalog: (v: string) => void;
+  targetSchema: string;
+  setTargetSchema: (v: string) => void;
+  targetTable: string;
+  setTargetTable: (v: string) => void;
+  defaultCatalog: string;
+  defaultSchema: string;
+  name: string;
+  slugTableName: (value: string) => string;
+}) {
+  return (
+    <>
+      <TextField
+        select
+        label="Storage"
+        value={storageType}
+        onChange={(e) => setStorageType(e.target.value as StorageType)}
+      >
+        <MenuItem value="uc_delta">Unity Catalog (Delta)</MenuItem>
+        <MenuItem value="lakebase">Lakebase (Postgres)</MenuItem>
+      </TextField>
+      <Button size="small" onClick={() => setShowStorage((v) => !v)} sx={{ alignSelf: 'flex-start' }}>
+        {showStorage ? 'Hide storage location' : 'Customize storage location'}
+      </Button>
+      <Collapse in={showStorage}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {storageType === 'lakebase'
+              ? `Records are stored in Lakebase Postgres. Defaults: ${defaultCatalog}.${defaultSchema}`
+              : `Records are saved outside the app metadata schema. Defaults: ${defaultCatalog}.${defaultSchema}`}
+          </Typography>
+          <TextField
+            label={storageType === 'lakebase' ? 'Database' : 'Catalog'}
+            value={targetCatalog}
+            onChange={(e) => setTargetCatalog(e.target.value)}
+            size="small"
+            disabled={storageType === 'lakebase'}
+            helperText={storageType === 'lakebase' ? 'From Lakebase app resource (PGDATABASE)' : undefined}
+          />
+          <TextField
+            label="Schema"
+            value={targetSchema}
+            onChange={(e) => setTargetSchema(e.target.value)}
+            size="small"
+          />
+          <TextField
+            label="Table"
+            value={targetTable}
+            onChange={(e) => setTargetTable(e.target.value)}
+            placeholder={name.trim() ? `${slugTableName(name)}_data` : 'auto from name'}
+            size="small"
+            helperText={
+              storageType === 'lakebase'
+                ? 'Postgres table created on publish'
+                : 'Delta table created on publish'
+            }
+          />
+        </Box>
+      </Collapse>
+    </>
+  );
+}
+
 export default function CreateProjectDialog({ open, onClose, onCreated }: CreateProjectDialogProps) {
+  const navigate = useNavigate();
+  const csvFileRef = useRef<HTMLInputElement>(null);
+  const lastAnalyzedHeaderRowRef = useRef(1);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [creationMode, setCreationMode] = useState<CreationMode>('new_table');
@@ -72,6 +212,12 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
   const [defaultCatalog, setDefaultCatalog] = useState('');
   const [defaultSchema, setDefaultSchema] = useState('');
   const [tablePreview, setTablePreview] = useState<UcTablePreview | null>(null);
+  const [csvPreview, setCsvPreview] = useState<CsvFormPreview | null>(null);
+  const [csvColumns, setCsvColumns] = useState<InferredColumn[]>([]);
+  const [csvText, setCsvText] = useState('');
+  const [headerRow, setHeaderRow] = useState(1);
+  const [csvPreviewLoading, setCsvPreviewLoading] = useState(false);
+  const [importRowsAfterPublish, setImportRowsAfterPublish] = useState(false);
   const [selectedColumnKeys, setSelectedColumnKeys] = useState<Set<string>>(new Set());
   const [recordKeyColumn, setRecordKeyColumn] = useState('');
   const [saving, setSaving] = useState(false);
@@ -81,6 +227,8 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     () => (tablePreview?.columns ?? []).filter((col) => !col.key.startsWith('_')),
     [tablePreview],
   );
+
+  const csvSelectableColumns = useMemo(() => csvColumns, [csvColumns]);
 
   useEffect(() => {
     if (!open) return;
@@ -105,6 +253,13 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     setShowStorage(false);
     setTargetTable('');
     setTablePreview(null);
+    setCsvPreview(null);
+    setCsvColumns([]);
+    setCsvText('');
+    setHeaderRow(1);
+    lastAnalyzedHeaderRowRef.current = 1;
+    setCsvPreviewLoading(false);
+    setImportRowsAfterPublish(false);
     setSelectedColumnKeys(new Set());
     setRecordKeyColumn('');
     setError(null);
@@ -136,6 +291,75 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     setTargetTable(preview.table);
   };
 
+  const analyzeCsv = async (csv: string, row: number) => {
+    setCsvPreviewLoading(true);
+    setError(null);
+    try {
+      const preview = await api.previewCsv(csv, row);
+      setCsvPreview(preview);
+      setCsvColumns(preview.columns);
+      const availableKeys = preview.columns.map((col) => col.field_key);
+      setSelectedColumnKeys((prev) => {
+        const available = new Set(availableKeys);
+        const preserved = new Set([...prev].filter((key) => available.has(key)));
+        if (preview.suggested_record_key) {
+          preserved.add(preview.suggested_record_key);
+        }
+        return preserved.size > 0 ? preserved : new Set(availableKeys);
+      });
+      setRecordKeyColumn(preview.suggested_record_key);
+      lastAnalyzedHeaderRowRef.current = row;
+    } catch (err) {
+      setCsvPreview(null);
+      setCsvColumns([]);
+      setError(err instanceof Error ? err.message : 'Failed to analyze CSV');
+    } finally {
+      setCsvPreviewLoading(false);
+    }
+  };
+
+  const handleCsvFileSelect = async (file: File) => {
+    setError(null);
+    try {
+      const csv = await readCsvFile(file);
+      setCsvText(csv);
+      if (!name.trim()) {
+        const baseName = file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim();
+        if (baseName) setName(baseName);
+      }
+      await analyzeCsv(csv, headerRow);
+    } catch (err) {
+      setCsvPreview(null);
+      setCsvColumns([]);
+      setCsvText('');
+      setError(err instanceof Error ? err.message : 'Failed to read CSV file');
+    } finally {
+      if (csvFileRef.current) csvFileRef.current.value = '';
+    }
+  };
+
+  const handleHeaderRowApply = async () => {
+    if (!csvText.trim() || headerRow < 1) return;
+    if (headerRow === lastAnalyzedHeaderRowRef.current && csvPreview) return;
+    await analyzeCsv(csvText, headerRow);
+  };
+
+  const updateCsvColumn = (fieldKey: string, patch: Partial<InferredColumn>) => {
+    setCsvColumns((prev) =>
+      prev.map((col) => (col.field_key === fieldKey ? { ...col, ...patch } : col)),
+    );
+  };
+
+  const setCsvColumnIncluded = (key: string, included: boolean) => {
+    if (key === recordKeyColumn) return;
+    setSelectedColumnKeys((prev) => {
+      const next = new Set(prev);
+      if (included) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
   const toggleColumn = (key: string) => {
     if (key === recordKeyColumn) return;
     setSelectedColumnKeys((prev) => {
@@ -158,21 +382,44 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
         return;
       }
     }
+    if (creationMode === 'import_csv') {
+      if (!csvPreview || csvColumns.length === 0) {
+        setError('Upload a CSV file to infer form fields.');
+        return;
+      }
+      if (
+        !csvColumns.some(
+          (col) => col.field_key === recordKeyColumn || selectedColumnKeys.has(col.field_key),
+        )
+      ) {
+        setError('Select at least one column for the form.');
+        return;
+      }
+      if (!recordKeyColumn) {
+        setError('Choose a record key column.');
+        return;
+      }
+    }
 
     setSaving(true);
     setError(null);
     try {
-      const seedFields =
-        creationMode === 'existing_uc_table' && tablePreview
-          ? buildSeedFields(tablePreview, selectedColumnKeys, recordKeyColumn)
-          : undefined;
+      let seedFields: FieldDefinition[] | undefined;
+      if (creationMode === 'existing_uc_table' && tablePreview) {
+        seedFields = buildSeedFields(tablePreview, selectedColumnKeys, recordKeyColumn);
+      } else if (creationMode === 'import_csv') {
+        seedFields = buildCsvSeedFields(csvColumns, selectedColumnKeys, recordKeyColumn);
+      }
 
-      await api.createProject({
+      const project = await api.createProject({
         name: name.trim(),
         description: description.trim() || undefined,
         storage_type: creationMode === 'existing_uc_table' ? 'uc_delta' : storageType,
         storage_mode: creationMode === 'existing_uc_table' ? 'existing_uc' : 'managed',
-        record_key_column: creationMode === 'existing_uc_table' ? recordKeyColumn : undefined,
+        record_key_column:
+          creationMode === 'existing_uc_table' || creationMode === 'import_csv'
+            ? recordKeyColumn
+            : undefined,
         target_catalog:
           creationMode === 'existing_uc_table'
             ? tablePreview?.catalog
@@ -193,9 +440,24 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               : undefined,
         seed_fields: seedFields,
       });
+
+      const projectId = project.project_id;
+      const wasImportCsv = creationMode === 'import_csv';
+      const stagedCsvText = csvText;
+      const stagedHeaderRow = headerRow;
+      const shouldStageImport = importRowsAfterPublish && stagedCsvText.trim().length > 0;
       reset();
       onCreated();
       onClose();
+
+      if (wasImportCsv) {
+        if (shouldStageImport) {
+          stageCsvForImport(projectId, { csv: stagedCsvText, headerRow: stagedHeaderRow });
+          navigate(`/collections/${projectId}?tab=designer&importCsv=1`);
+        } else {
+          navigate(`/collections/${projectId}?tab=designer`);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
@@ -206,7 +468,17 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
   const canCreate =
     name.trim().length > 0 &&
     (creationMode === 'new_table' ||
-      (tablePreview !== null && selectedColumnKeys.size > 0 && recordKeyColumn.length > 0));
+      (creationMode === 'existing_uc_table' &&
+        tablePreview !== null &&
+        selectedColumnKeys.size > 0 &&
+        recordKeyColumn.length > 0) ||
+      (creationMode === 'import_csv' &&
+        csvPreview !== null &&
+        csvColumns.length > 0 &&
+        recordKeyColumn.length > 0 &&
+        csvColumns.some(
+          (col) => col.field_key === recordKeyColumn || selectedColumnKeys.has(col.field_key),
+        )));
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
@@ -237,7 +509,12 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               const mode = e.target.value as CreationMode;
               setCreationMode(mode);
               setTablePreview(null);
+              setCsvPreview(null);
+              setCsvColumns([]);
+              setCsvText('');
+              setHeaderRow(1);
               setSelectedColumnKeys(new Set());
+              setRecordKeyColumn('');
               setError(null);
               if (mode === 'existing_uc_table') {
                 setStorageType('uc_delta');
@@ -254,6 +531,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               control={<Radio />}
               label="Use an existing Unity Catalog table"
             />
+            <FormControlLabel value="import_csv" control={<Radio />} label="Import from CSV" />
           </RadioGroup>
         </Box>
 
@@ -319,56 +597,223 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               </Box>
             )}
           </Box>
-        ) : (
-          <>
-            <TextField
-              select
-              label="Storage"
-              value={storageType}
-              onChange={(e) => setStorageType(e.target.value as StorageType)}
+        ) : creationMode === 'import_csv' ? (
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Upload a CSV to infer form fields from column headers and sample values. Review the
+              schema before creating the collection.
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', mb: 2 }}>
+              <TextField
+                label="Header row"
+                type="number"
+                size="small"
+                value={headerRow}
+                onChange={(e) => {
+                  const next = Number.parseInt(e.target.value, 10);
+                  setHeaderRow(Number.isFinite(next) && next > 0 ? next : 1);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && csvText.trim()) void handleHeaderRowApply();
+                }}
+                inputProps={{ min: 1, step: 1 }}
+                helperText="Row number where column names appear (row 1 is the first line)"
+                sx={{ width: 160 }}
+              />
+              <input
+              ref={csvFileRef}
+              type="file"
+              accept=".csv"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleCsvFileSelect(file);
+              }}
+            />
+            <Button
+              variant="outlined"
+              startIcon={csvPreviewLoading ? <CircularProgress size={16} /> : <UploadFileIcon />}
+              onClick={() => csvFileRef.current?.click()}
+              disabled={csvPreviewLoading}
             >
-              <MenuItem value="uc_delta">Unity Catalog (Delta)</MenuItem>
-              <MenuItem value="lakebase">Lakebase (Postgres)</MenuItem>
-            </TextField>
-            <Button size="small" onClick={() => setShowStorage((v) => !v)} sx={{ alignSelf: 'flex-start' }}>
-              {showStorage ? 'Hide storage location' : 'Customize storage location'}
+              {csvPreviewLoading ? 'Analyzing CSV…' : 'Choose CSV file'}
             </Button>
-            <Collapse in={showStorage}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  {storageType === 'lakebase'
-                    ? `Records are stored in Lakebase Postgres. Defaults: ${defaultCatalog}.${defaultSchema}`
-                    : `Records are saved outside the app metadata schema. Defaults: ${defaultCatalog}.${defaultSchema}`}
+            {csvText.trim().length > 0 && (
+              <Button
+                variant="text"
+                onClick={() => void handleHeaderRowApply()}
+                disabled={csvPreviewLoading || headerRow < 1}
+              >
+                Re-analyze
+              </Button>
+            )}
+            </Box>
+            {csvPreview && (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Headers on row {csvPreview.header_row}: {csvPreview.row_count} data row
+                {csvPreview.row_count === 1 ? '' : 's'},{' '}
+                {csvColumns.length} column{csvColumns.length === 1 ? '' : 's'}
+              </Typography>
+            )}
+            {csvSelectableColumns.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                  <InputLabel id="csv-record-key-label">Record key column</InputLabel>
+                  <Select
+                    labelId="csv-record-key-label"
+                    label="Record key column"
+                    value={recordKeyColumn}
+                    onChange={(e) => {
+                      const key = e.target.value;
+                      setRecordKeyColumn(key);
+                      setSelectedColumnKeys((prev) => new Set(prev).add(key));
+                    }}
+                  >
+                    {csvSelectableColumns.map((col) => (
+                      <MenuItem key={col.field_key} value={col.field_key}>
+                        {col.label} ({col.field_key})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Unique business key used to identify rows when editing existing data.
+                  </FormHelperText>
+                </FormControl>
+                <Typography variant="subtitle2" gutterBottom>
+                  Form columns
                 </Typography>
-                <TextField
-                  label={storageType === 'lakebase' ? 'Database' : 'Catalog'}
-                  value={targetCatalog}
-                  onChange={(e) => setTargetCatalog(e.target.value)}
-                  size="small"
-                  disabled={storageType === 'lakebase'}
-                  helperText={storageType === 'lakebase' ? 'From Lakebase app resource (PGDATABASE)' : undefined}
-                />
-                <TextField
-                  label="Schema"
-                  value={targetSchema}
-                  onChange={(e) => setTargetSchema(e.target.value)}
-                  size="small"
-                />
-                <TextField
-                  label="Table"
-                  value={targetTable}
-                  onChange={(e) => setTargetTable(e.target.value)}
-                  placeholder={name.trim() ? `${slugTableName(name)}_data` : 'auto from name'}
-                  size="small"
-                  helperText={
-                    storageType === 'lakebase'
-                      ? 'Postgres table created on publish'
-                      : 'Delta table created on publish'
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {csvSelectableColumns.map((col) => (
+                    <Box
+                      key={col.field_key}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={
+                              col.field_key === recordKeyColumn ||
+                              selectedColumnKeys.has(col.field_key)
+                            }
+                            disabled={col.field_key === recordKeyColumn}
+                            onChange={(e) => setCsvColumnIncluded(col.field_key, e.target.checked)}
+                          />
+                        }
+                        label={`${col.label}${col.field_key === recordKeyColumn ? ' — record key' : ''}`}
+                        sx={{ minWidth: 160, mr: 0 }}
+                      />
+                      <TextField
+                        select
+                        size="small"
+                        label="Type"
+                        value={col.field_type}
+                        onChange={(e) =>
+                          updateCsvColumn(col.field_key, {
+                            field_type: e.target.value as FieldType,
+                          })
+                        }
+                        sx={{ minWidth: 160 }}
+                      >
+                        {CSV_FIELD_TYPES.map((t) => (
+                          <MenuItem key={t.value} value={t.value}>
+                            {t.label}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    </Box>
+                  ))}
+                </Box>
+                {csvPreview && csvPreview.sample_rows.length > 0 && (
+                  <Box sx={{ mt: 2, overflowX: 'auto' }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Sample data
+                    </Typography>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          {csvSelectableColumns
+                            .filter(
+                              (col) =>
+                                selectedColumnKeys.has(col.field_key) ||
+                                col.field_key === recordKeyColumn,
+                            )
+                            .map((col) => (
+                              <TableCell key={col.field_key}>{col.label}</TableCell>
+                            ))}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {csvPreview.sample_rows.map((row, rowIndex) => (
+                          <TableRow key={rowIndex}>
+                            {csvSelectableColumns
+                              .filter(
+                                (col) =>
+                                  selectedColumnKeys.has(col.field_key) ||
+                                  col.field_key === recordKeyColumn,
+                              )
+                              .map((col) => (
+                                <TableCell key={col.field_key}>
+                                  {String(row[col.field_key] ?? '')}
+                                </TableCell>
+                              ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Box>
+                )}
+                <FormControlLabel
+                  sx={{ mt: 2 }}
+                  control={
+                    <Checkbox
+                      checked={importRowsAfterPublish}
+                      onChange={(e) => setImportRowsAfterPublish(e.target.checked)}
+                      disabled={!csvPreview || csvPreview.row_count === 0}
+                    />
                   }
+                  label="Import CSV rows after I publish"
                 />
               </Box>
-            </Collapse>
-          </>
+            )}
+            <StorageFields
+              storageType={storageType}
+              setStorageType={setStorageType}
+              showStorage={showStorage}
+              setShowStorage={setShowStorage}
+              targetCatalog={targetCatalog}
+              setTargetCatalog={setTargetCatalog}
+              targetSchema={targetSchema}
+              setTargetSchema={setTargetSchema}
+              targetTable={targetTable}
+              setTargetTable={setTargetTable}
+              defaultCatalog={defaultCatalog}
+              defaultSchema={defaultSchema}
+              name={name}
+              slugTableName={slugTableName}
+            />
+          </Box>
+        ) : (
+          <StorageFields
+            storageType={storageType}
+            setStorageType={setStorageType}
+            showStorage={showStorage}
+            setShowStorage={setShowStorage}
+            targetCatalog={targetCatalog}
+            setTargetCatalog={setTargetCatalog}
+            targetSchema={targetSchema}
+            setTargetSchema={setTargetSchema}
+            targetTable={targetTable}
+            setTargetTable={setTargetTable}
+            defaultCatalog={defaultCatalog}
+            defaultSchema={defaultSchema}
+            name={name}
+            slugTableName={slugTableName}
+          />
         )}
 
         {error && <span style={{ color: '#c41230', fontSize: '0.875rem' }}>{error}</span>}

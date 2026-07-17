@@ -17,6 +17,7 @@ import { useLookupOptions } from '../../hooks/useLookupOptions';
 import { useInvalidateRecords, useRecords } from '../../hooks/useRecords';
 import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
 import { buildRecordGridColumns } from '../../lib/recordGridColumns';
+import { readCsvFile } from '../../lib/csvFile';
 import type { ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
 import { validateRecordValues } from '../../lib/recordValidation';
 import BusyButton from '../common/BusyButton';
@@ -193,14 +194,6 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
     setImportMessage(null);
     setDrawerOpen(true);
   };
-
-  const readCsvFile = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result ?? ''));
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsText(file);
-    });
 
   const exportCsv = async () => {
     setImportMessage(null);

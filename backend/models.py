@@ -189,6 +189,7 @@ class RecordAuditEntry(BaseModel):
 
 class ImportRecordsCsvRequest(BaseModel):
     csv: str = Field(min_length=1, max_length=2_000_000)
+    header_row: int = Field(default=1, ge=1)
 
 
 class ImportRecordError(BaseModel):
@@ -430,3 +431,26 @@ class BrandingUpdateRequest(BaseModel):
     @classmethod
     def _logo(cls, value: Optional[str]) -> Optional[str]:
         return _validate_logo(value)
+
+
+class PreviewCsvRequest(BaseModel):
+    csv: str = Field(min_length=1, max_length=2_000_000)
+    header_row: int = Field(default=1, ge=1)
+
+
+class InferredColumn(BaseModel):
+    field_key: str
+    label: str
+    field_type: FieldType
+    config_json: Optional[dict[str, Any]] = None
+    sort_order: int
+    is_required: bool = False
+    included: bool = True
+
+
+class CsvFormPreview(BaseModel):
+    columns: list[InferredColumn]
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int
+    suggested_record_key: str
+    header_row: int = 1

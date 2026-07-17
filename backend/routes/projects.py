@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 
 from backend import audit_repository, config, repository, uc_grants
 from backend import auth, lookup_repository
-from backend.csv_util import parse_records_csv, records_to_csv
+from backend.csv_util import infer_fields_from_csv, parse_records_csv, records_to_csv
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
@@ -15,10 +15,13 @@ from backend.models import (
     AddMemberResponse,
     CreateProjectRequest,
     CreateRecordRequest,
+    CsvFormPreview,
     FieldDefinition,
     ImportRecordError,
     ImportRecordsCsvRequest,
     ImportRecordsResult,
+    InferredColumn,
+    PreviewCsvRequest,
     ProjectDetail,
     ProjectMember,
     ProjectSummary,
@@ -142,6 +145,40 @@ def list_projects(request: Request):
     user = auth.get_user_email(request)
     rows = repository.list_projects_for_user(user)
     return [ProjectSummary(**project_to_summary(row, row.get("role"))) for row in rows]
+
+
+@router.post("/preview-csv", response_model=CsvFormPreview)
+def preview_csv(body: PreviewCsvRequest, request: Request):
+    from backend import auth
+
+    auth.get_user_email(request)
+    try:
+        fields, sample_rows, row_count, suggested_record_key = infer_fields_from_csv(
+            body.csv,
+            header_row=body.header_row,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    columns = [
+        InferredColumn(
+            field_key=f.field_key,
+            label=f.label,
+            field_type=f.field_type,
+            config_json=f.config_json,
+            sort_order=f.sort_order,
+            is_required=f.is_required,
+            included=True,
+        )
+        for f in fields
+    ]
+    return CsvFormPreview(
+        columns=columns,
+        sample_rows=sample_rows,
+        row_count=row_count,
+        suggested_record_key=suggested_record_key,
+        header_row=body.header_row,
+    )
 
 
 @router.post("", response_model=ProjectDetail, status_code=201)
@@ -666,14 +703,14 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
         fields = repository.list_fields(project_id, published_only=True)
         field_keys = [f.field_key for f in fields]
         try:
-            parsed = parse_records_csv(body.csv, field_keys)
+            parsed = parse_records_csv(body.csv, field_keys, header_row=body.header_row)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         lookup_allowed = build_lookup_allowed(fields, project_id)
         created = 0
         failed: list[ImportRecordError] = []
-        for row_num, values in enumerate(parsed, start=2):
+        for row_num, values in enumerate(parsed, start=body.header_row + 1):
             errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
             if errors:
                 failed.append(ImportRecordError(row=row_num, field_errors=errors))

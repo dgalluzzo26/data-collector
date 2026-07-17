@@ -266,6 +266,24 @@ export interface UcTablePreview {
   sample_rows: Record<string, unknown>[];
 }
 
+export interface InferredColumn {
+  field_key: string;
+  label: string;
+  field_type: FieldType;
+  config_json?: Record<string, unknown> | null;
+  sort_order: number;
+  is_required: boolean;
+  included: boolean;
+}
+
+export interface CsvFormPreview {
+  columns: InferredColumn[];
+  sample_rows: Record<string, unknown>[];
+  row_count: number;
+  suggested_record_key: string;
+  header_row: number;
+}
+
 export interface BindLookupPayload {
   name: string;
   description?: string;

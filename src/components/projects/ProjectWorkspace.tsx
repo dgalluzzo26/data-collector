@@ -12,6 +12,7 @@ import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
 import { api, ApiPublishError } from '../../api/client';
 import { useProject } from '../../hooks/useProjects';
+import { clearStagedCsvImport, getStagedCsvImport } from '../../lib/csvFile';
 import { designerBaseline, draftFieldsOnly } from '../../lib/designerFields';
 import { showGenieTab } from '../../lib/genie';
 import type { FieldDefinition } from '../../types';
@@ -169,6 +170,8 @@ export default function ProjectWorkspace() {
     }
     setPublishing(true);
     setMessage(null);
+    const shouldImportCsv = searchParams.get('importCsv') === '1';
+    const stagedImport = projectId ? getStagedCsvImport(projectId) : null;
     try {
       if (designerFields.length > 0) {
         await api.saveFields(project.project_id, designerFields);
@@ -179,8 +182,37 @@ export default function ProjectWorkspace() {
       setTab('records');
       const storageLabel =
         project.storage_type === 'lakebase' ? 'Lakebase Postgres' : 'Unity Catalog';
+      let publishText = `Published to ${storageLabel}.`;
+
+      if (shouldImportCsv && stagedImport && projectId) {
+        try {
+          const result = await api.importRecordsCsv(
+            project.project_id,
+            stagedImport.csv,
+            stagedImport.headerRow,
+          );
+          clearStagedCsvImport(projectId);
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('importCsv');
+          setSearchParams(nextParams);
+          if (result.failed.length > 0) {
+            publishText = `Published to ${storageLabel}. Imported ${result.created} row${
+              result.created === 1 ? '' : 's'
+            }; ${result.failed.length} row${result.failed.length === 1 ? '' : 's'} failed validation.`;
+          } else {
+            publishText = `Published to ${storageLabel} and imported ${result.created} row${
+              result.created === 1 ? '' : 's'
+            } from CSV.`;
+          }
+        } catch (importErr) {
+          publishText = `Published to ${storageLabel}, but CSV import failed: ${
+            importErr instanceof Error ? importErr.message : 'unknown error'
+          }`;
+        }
+      }
+
       setMessage({
-        text: `Published to ${storageLabel}.`,
+        text: publishText,
         severity: 'success',
       });
     } catch (err) {

@@ -6,6 +6,7 @@ import type {
   AppBranding,
   BindLookupPayload,
   CreateProjectPayload,
+  CsvFormPreview,
   FieldDefinition,
   GenieAskResponse,
   GenieStatus,
@@ -182,6 +183,12 @@ export const api = {
     ),
 
   listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading forms…'),
+  previewCsv: (csv: string, headerRow = 1) =>
+    request<CsvFormPreview>(
+      '/projects/preview-csv',
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+    ),
   createProject: (body: CreateProjectPayload) =>
     request<ProjectDetail>(
       '/projects',
@@ -286,10 +293,10 @@ export const api = {
       endBusy();
     }
   },
-  importRecordsCsv: (id: string, csv: string) =>
+  importRecordsCsv: (id: string, csv: string, headerRow = 1) =>
     request<ImportRecordsResult>(
       `/projects/${id}/records/import`,
-      { method: 'POST', body: JSON.stringify({ csv }) },
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
       'Importing records…',
     ),
 
