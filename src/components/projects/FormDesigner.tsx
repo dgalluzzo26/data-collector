@@ -91,7 +91,7 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
 
       {sorted.length === 0 && (
         <Paper className="page-card" sx={{ p: 3, textAlign: 'center' }}>
-          <Typography color="text.secondary">No fields yet. Add fields to build your collection form.</Typography>
+          <Typography color="text.secondary">No fields yet. Add fields to build your form.</Typography>
         </Paper>
       )}
 

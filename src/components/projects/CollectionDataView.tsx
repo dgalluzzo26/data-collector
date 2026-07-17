@@ -36,7 +36,7 @@ export default function CollectionDataView() {
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5, minHeight: '60vh' }}>
         <CircularProgress size={22} />
-        <Typography>Loading collection…</Typography>
+        <Typography>Loading form…</Typography>
       </Box>
     );
   }
@@ -53,9 +53,9 @@ export default function CollectionDataView() {
   if (error || !project) {
     return (
       <Box sx={{ p: 4, maxWidth: 720, mx: 'auto' }}>
-        <Typography color="error">{error || 'Collection not found'}</Typography>
+        <Typography color="error">{error || 'Form not found'}</Typography>
         <Button component={RouterLink} to="/collections" sx={{ mt: 2 }}>
-          Back to collections
+          Back to forms
         </Button>
       </Box>
     );
@@ -106,7 +106,7 @@ export default function CollectionDataView() {
               startIcon={<SettingsIcon />}
               sx={{ alignSelf: 'flex-start' }}
             >
-              Collection setup
+              Form setup
             </Button>
           )}
         </Box>
@@ -115,12 +115,12 @@ export default function CollectionDataView() {
       <Box component="main" sx={{ px: { xs: 2, md: 3 }, py: 3, maxWidth: 1200, mx: 'auto' }}>
         {project.status !== 'published' && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            This collection is not published yet. An admin must publish the form before records can be collected.
+            This form is not published yet. An admin must publish it before records can be collected.
             {isAdmin && (
               <>
                 {' '}
                 <Link component={RouterLink} to={collectionAdminPath(project.project_id, 'designer')}>
-                  Open collection setup
+                  Open form setup
                 </Link>
               </>
             )}

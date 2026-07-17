@@ -56,18 +56,18 @@ function BulletList({ items }: { items: ReactNode[] }) {
 function UsingHelp() {
   return (
     <>
-      <Section title="What is Data Collector?">
+      <Section title="What is Brick Constructor?">
         <Typography variant="body2" color="text.secondary" paragraph>
-          Data Collector lets teams build custom data collection forms, share a data-entry link with
+          Brick Constructor lets teams build custom data collection forms, share a data-entry link with
           contributors, and store submitted records in Databricks (Unity Catalog or Lakebase
-          Postgres). Collection <strong>metadata</strong> (forms, members, settings) always lives in
-          Unity Catalog; <strong>record rows</strong> live in the storage you choose per collection.
+          Postgres). Form <strong>metadata</strong> (fields, members, settings) always lives in
+          Unity Catalog; <strong>record rows</strong> live in the storage you choose per form.
         </Typography>
       </Section>
 
-      <Section title="Your role on a collection">
+      <Section title="Your role on a form">
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Each collection has its own membership. Your role controls what you can do:
+          Each form has its own membership. Your role controls what you can do:
         </Typography>
         <Table size="small" sx={{ mb: 1 }}>
           <TableHead>
@@ -86,7 +86,7 @@ function UsingHelp() {
             </TableRow>
             <TableRow>
               <TableCell>Editor</TableCell>
-              <TableCell>Enter, edit, import, and export records on published collections</TableCell>
+              <TableCell>Enter, edit, import, and export records on published forms</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Reader</TableCell>
@@ -95,19 +95,19 @@ function UsingHelp() {
           </TableBody>
         </Table>
         <Typography variant="body2" color="text.secondary">
-          You must be added as a member to see a collection. If you open a data-entry link without
-          access, the page shows collection admins you can email to request access.
+          You must be added as a member to see a form. If you open a data-entry link without
+          access, the page shows form admins you can email to request access.
         </Typography>
       </Section>
 
-      <Section title="Creating and publishing a collection (admins)">
+      <Section title="Creating and publishing a form (admins)">
         <BulletList
           items={[
             <>
-              Go to <strong>Collections → New collection</strong> (manual or AI-assisted).
+              Go to <strong>Forms → New form</strong> (manual or AI-assisted).
             </>,
             <>
-              Open the collection workspace. Use <strong>Form designer</strong> to add fields,{' '}
+              Open the form workspace. Use <strong>Form designer</strong> to add fields,{' '}
               <strong>Lookup tables</strong> for dropdown data, and <strong>Settings</strong> for
               storage (Unity Catalog or Lakebase).
             </>,
@@ -118,10 +118,10 @@ function UsingHelp() {
             </>,
             <>
               Click <strong>Publish</strong> when the form is ready. Publishing creates the backing
-              record table and makes the collection available for data entry.
+              record table and makes the form available for data entry.
             </>,
             <>
-              Copy the <strong>Data entry URL</strong> from the collection workspace and share it
+              Copy the <strong>Data entry URL</strong> from the form workspace and share it
               with editors and viewers.
             </>,
           ]}
@@ -133,7 +133,7 @@ function UsingHelp() {
           items={[
             <>
               Open the <strong>data-entry URL</strong> or the <strong>Records</strong> tab in the
-              collection workspace.
+              form workspace.
             </>,
             <>
               Use column headers to <strong>sort</strong>. Use the toolbar <strong>Filters</strong>{' '}
@@ -156,9 +156,9 @@ function UsingHelp() {
 
       <Section title="Genie Q&A">
         <Typography variant="body2" color="text.secondary">
-          On published collections with a configured sync location (Lakebase) or Unity Catalog
+          On published forms with a configured sync location (Lakebase) or Unity Catalog
           table, the <strong>Genie Q&A</strong> tab lets you ask natural-language questions about
-          the data. Admins can provision or re-sync Genie from collection settings when needed.
+          the data. Admins can provision or re-sync Genie from form settings when needed.
         </Typography>
       </Section>
 
@@ -310,7 +310,7 @@ npm run deploy:prod     # prod`}</Code>
           </TableHead>
           <TableBody>
             <TableRow>
-              <TableCell>Collections page</TableCell>
+              <TableCell>Forms page</TableCell>
               <TableCell>Loads without Internal Server Error (UC grants OK)</TableCell>
             </TableRow>
             <TableRow>
@@ -389,12 +389,12 @@ npm run deploy:prod     # prod`}</Code>
           </TableHead>
           <TableBody>
             <TableRow>
-              <TableCell>Internal Server Error on Collections</TableCell>
+              <TableCell>Internal Server Error on Forms</TableCell>
               <TableCell>UC grants for service principal client id</TableCell>
             </TableRow>
             <TableRow>
-              <TableCell>Access denied / no collections</TableCell>
-              <TableCell>Add user to collection Members; grant Can use on app</TableCell>
+              <TableCell>Access denied / no forms</TableCell>
+              <TableCell>Add user to form Members; grant Can use on app</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Member search fails</TableCell>
@@ -424,7 +424,7 @@ export default function HelpView() {
         Help
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        How to use Data Collector, plus setup and deployment guides for workspace administrators.
+        How to use Brick Constructor, plus setup and deployment guides for workspace administrators.
       </Typography>
 
       <Tabs

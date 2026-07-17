@@ -83,7 +83,7 @@ export default function GenieAskPanel({ project, isAdmin }: GenieAskPanelProps) 
   const ready = status?.ready ?? false;
   const suggested = messages.length > 0
     ? messages[messages.length - 1].response?.suggested_questions ?? []
-    : ['How many records are in this collection?', 'Show all records'];
+    : ['How many records are in this form?', 'Show all records'];
 
   return (
     <Paper className="page-card" sx={{ p: 2.5, display: 'flex', flexDirection: 'column', minHeight: 560 }}>
@@ -94,7 +94,7 @@ export default function GenieAskPanel({ project, isAdmin }: GenieAskPanelProps) 
         </Typography>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Natural-language questions over this collection&apos;s published table, powered by Databricks Genie.
+        Natural-language questions over this form&apos;s published table, powered by Databricks Genie.
       </Typography>
 
       {!ready && (
@@ -111,7 +111,7 @@ export default function GenieAskPanel({ project, isAdmin }: GenieAskPanelProps) 
         >
           {status?.status === 'error'
             ? status.error || 'Genie setup failed.'
-            : 'Genie is not ready yet. Publish the collection or ask an admin to sync Genie.'}
+            : 'Genie is not ready yet. Publish the form or ask an admin to sync Genie.'}
         </Alert>
       )}
 

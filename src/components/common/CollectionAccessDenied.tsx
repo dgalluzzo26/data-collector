@@ -18,10 +18,10 @@ interface CollectionAccessDeniedProps {
 
 function requestAccessMailto(collectionName: string | undefined, adminEmails: string[]): string {
   const to = adminEmails.join(',');
-  const title = collectionName || 'this collection';
+  const title = collectionName || 'this form';
   const subject = encodeURIComponent(`Access request: ${title}`);
   const body = encodeURIComponent(
-    `Hi,\n\nI'd like access to the "${title}" data collection in Data Collector.\n\nThanks!`,
+    `Hi,\n\nI'd like access to the "${title}" form in Brick Constructor.\n\nThanks!`,
   );
   return `mailto:${to}?subject=${subject}&body=${body}`;
 }
@@ -30,7 +30,7 @@ export default function CollectionAccessDenied({
   collectionName,
   adminEmails = [],
   backTo = '/collections',
-  backLabel = 'Back to collections',
+  backLabel = 'Back to forms',
 }: CollectionAccessDeniedProps) {
   const hasAdmins = adminEmails.length > 0;
 
@@ -87,7 +87,7 @@ export default function CollectionAccessDenied({
           )}
 
           <Typography variant="body1" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
-            This collection is restricted to invited members. Ask a collection admin to add your
+            This form is restricted to invited members. Ask a form admin to add your
             workspace email before you can view or enter data.
           </Typography>
 
@@ -103,7 +103,7 @@ export default function CollectionAccessDenied({
             >
               <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                 <EmailOutlinedIcon fontSize="small" color="action" />
-                Collection admins
+                Form admins
               </Typography>
               <Stack spacing={0.5} sx={{ mb: 2 }}>
                 {adminEmails.map((email) => (
@@ -124,7 +124,7 @@ export default function CollectionAccessDenied({
             </Box>
           ) : (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Contact your Data Collector workspace administrator to be added to this collection.
+              Contact your Brick Constructor workspace administrator to be added to this form.
             </Typography>
           )}
 

@@ -171,7 +171,7 @@ export function applyPalettePreset(branding: AppBranding, presetId: string): App
 
 export function paletteToBranding(preset: BrandingPalettePreset): AppBranding {
   return {
-    app_title: 'Data Collector',
+    app_title: 'Brick Constructor',
     agency_name: preset.id === 'dhs' ? 'U.S. Department of Homeland Security' : 'Databricks',
     logo_data_url: null,
     chrome: { ...preset.chrome },
