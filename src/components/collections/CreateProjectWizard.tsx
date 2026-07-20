@@ -77,7 +77,7 @@ export default function CreateProjectWizard({ open, onClose, onCreated }: Create
       handleClose();
       navigate(`/collections/${project.project_id}?tab=designer`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create collection');
+      setError(err instanceof Error ? err.message : 'Failed to create form');
     } finally {
       setLoading(false);
     }
@@ -88,7 +88,7 @@ export default function CreateProjectWizard({ open, onClose, onCreated }: Create
       <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <AutoAwesomeIcon color="primary" />
-          New collection with AI
+          New form with AI
         </DialogTitle>
         <DialogContent>
           <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
@@ -167,7 +167,7 @@ export default function CreateProjectWizard({ open, onClose, onCreated }: Create
               )}
 
               <Typography variant="caption" color="text.secondary">
-                You can edit everything after creating the collection. Nothing is published until you click Publish.
+                You can edit everything after creating the form. Nothing is published until you click Publish.
               </Typography>
             </Box>
           )}
@@ -208,7 +208,7 @@ export default function CreateProjectWizard({ open, onClose, onCreated }: Create
                   Back
                 </Button>
                 <BusyButton variant="contained" onClick={create} busy={loading} busyLabel="Creating…">
-                  Create collection
+                  Create form
                 </BusyButton>
               </>
             )}

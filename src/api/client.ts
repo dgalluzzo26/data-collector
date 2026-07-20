@@ -181,12 +181,12 @@ export const api = {
       120_000,
     ),
 
-  listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading collections…'),
+  listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading forms…'),
   createProject: (body: CreateProjectPayload) =>
     request<ProjectDetail>(
       '/projects',
       { method: 'POST', body: JSON.stringify(body) },
-      'Creating collection…',
+      'Creating form…',
       120_000,
     ),
   getProject: (id: string) =>
@@ -194,7 +194,7 @@ export const api = {
   updateProject: (id: string, body: Partial<CreateProjectPayload>) =>
     request<ProjectDetail>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, 'Saving…'),
   deleteProject: (id: string) =>
-    request<void>(`/projects/${id}`, { method: 'DELETE' }, 'Deleting collection…'),
+    request<void>(`/projects/${id}`, { method: 'DELETE' }, 'Deleting form…'),
 
   listMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`, undefined, 'Loading members…'),
   searchWorkspaceUsers: (id: string, q: string) =>
@@ -374,7 +374,7 @@ export const api = {
     request<ProjectDetail>(
       '/ai/create-from-proposal',
       { method: 'POST', body: JSON.stringify({ proposal }) },
-      'Creating collection…',
+      'Creating form…',
       120_000,
     ),
   generateLookup: (projectId: string, prompt: string) =>

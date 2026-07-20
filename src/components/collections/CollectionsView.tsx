@@ -30,7 +30,7 @@ export default function CollectionsView() {
   const handleDelete = async (project: ProjectSummary) => {
     if (project.role !== 'admin') return;
     const confirmed = window.confirm(
-      `Delete "${project.name}"?\n\nThis removes the collection definition, form design, and access settings. Data in the backing table is not deleted.`,
+      `Delete "${project.name}"?\n\nThis removes the form definition, field design, and access settings. Data in the backing table is not deleted.`,
     );
     if (!confirmed) return;
 
@@ -40,7 +40,7 @@ export default function CollectionsView() {
       await api.deleteProject(project.project_id);
       await refresh();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Failed to delete collection');
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete form');
     } finally {
       setDeletingId(null);
     }
@@ -51,14 +51,14 @@ export default function CollectionsView() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <div>
           <Typography variant="h4" component="h1" className="page-title" gutterBottom>
-            Collections
+            Forms
           </Typography>
           <Typography color="text.secondary">
             Define forms, manage access, and collect data into Unity Catalog.
           </Typography>
         </div>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>
-          New collection
+          New form
         </Button>
       </Box>
 
@@ -93,7 +93,7 @@ export default function CollectionsView() {
                 <TableCell colSpan={7}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <CircularProgress size={18} />
-                    Loading collections…
+                    Loading forms…
                   </Box>
                 </TableCell>
               </TableRow>
@@ -101,7 +101,7 @@ export default function CollectionsView() {
             {!loading && projects.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7}>
-                  No collections yet. Create one to design a form and start collecting data.
+                  No forms yet. Create one to design fields and start collecting data.
                 </TableCell>
               </TableRow>
             )}

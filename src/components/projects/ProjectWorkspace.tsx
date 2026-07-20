@@ -218,7 +218,7 @@ export default function ProjectWorkspace() {
     <Box>
       <Breadcrumbs sx={{ mb: 2 }}>
         <Link component={RouterLink} to="/collections" underline="hover">
-          Collections
+          Forms
         </Link>
         <Typography color="text.primary">{project.name}</Typography>
       </Breadcrumbs>
