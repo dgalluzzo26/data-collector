@@ -22,6 +22,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { api } from '../../api/client';
+import { readCsvFile } from '../../lib/csvFile';
 import type { LookupProposal, LookupRow, LookupTable, ProjectDetail } from '../../types';
 import BusyButton from '../common/BusyButton';
 import BindLookupDialog from './BindLookupDialog';
@@ -165,14 +166,6 @@ export default function LookupsPanel({ project, isAdmin, onChanged }: LookupsPan
       setAiLoading(false);
     }
   };
-
-  const readCsvFile = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result ?? ''));
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsText(file);
-    });
 
   const importNewLookupCsv = async (file: File) => {
     const name =

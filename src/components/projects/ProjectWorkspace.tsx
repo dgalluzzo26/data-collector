@@ -12,7 +12,9 @@ import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
 import { api, ApiPublishError } from '../../api/client';
 import { useProject } from '../../hooks/useProjects';
-import { designerBaseline, draftFieldsOnly } from '../../lib/designerFields';
+import { clearStagedCsvImport, getStagedCsvImport } from '../../lib/csvFile';
+import { designerBaseline, draftFieldsOnly, publishedFields as selectPublishedFields } from '../../lib/designerFields';
+import { formatImportResult } from '../../lib/importRecords';
 import { showGenieTab } from '../../lib/genie';
 import type { FieldDefinition } from '../../types';
 import BusyButton from '../common/BusyButton';
@@ -30,7 +32,7 @@ type TabKey = 'records' | 'designer' | 'lookups' | 'members' | 'settings' | 'gen
 
 type WorkspaceMessage = {
   text: string;
-  severity: 'success' | 'error' | 'info';
+  severity: 'success' | 'warning' | 'error' | 'info';
   title?: string;
   grantSql?: string;
 };
@@ -92,7 +94,10 @@ function WorkspaceMessageBanner({ message }: { message: WorkspaceMessage }) {
   }
 
   return (
-    <Alert severity={message.severity === 'success' ? 'success' : 'info'} sx={{ mb: 2 }}>
+    <Alert
+      severity={message.severity === 'success' ? 'success' : message.severity === 'warning' ? 'warning' : 'info'}
+      sx={{ mb: 2, whiteSpace: 'pre-line' }}
+    >
       {message.text}
     </Alert>
   );
@@ -169,6 +174,8 @@ export default function ProjectWorkspace() {
     }
     setPublishing(true);
     setMessage(null);
+    const shouldImportCsv = searchParams.get('importCsv') === '1';
+    const stagedImport = projectId ? getStagedCsvImport(projectId) : null;
     try {
       if (designerFields.length > 0) {
         await api.saveFields(project.project_id, designerFields);
@@ -179,9 +186,42 @@ export default function ProjectWorkspace() {
       setTab('records');
       const storageLabel =
         project.storage_type === 'lakebase' ? 'Lakebase Postgres' : 'Unity Catalog';
+      let publishText = `Published to ${storageLabel}.`;
+      let publishSeverity: WorkspaceMessage['severity'] = 'success';
+
+      if (shouldImportCsv && stagedImport && projectId) {
+        const fieldsForLabels =
+          designerFields.length > 0 ? designerFields : selectPublishedFields(project);
+        const fieldLabels = Object.fromEntries(
+          fieldsForLabels.map((field) => [field.field_key, field.label]),
+        );
+        try {
+          const result = await api.importRecordsCsv(
+            project.project_id,
+            stagedImport.csv,
+            stagedImport.headerRow,
+          );
+          clearStagedCsvImport(projectId);
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('importCsv');
+          setSearchParams(nextParams);
+          if (result.failed.length > 0) {
+            publishText = `Published to ${storageLabel}.\n${formatImportResult(result, fieldLabels)}`;
+            publishSeverity = 'warning';
+          } else {
+            publishText = `Published to ${storageLabel} and ${formatImportResult(result, fieldLabels).replace(/^\w/, (c) => c.toLowerCase())}`;
+          }
+        } catch (importErr) {
+          publishText = `Published to ${storageLabel}, but CSV import failed: ${
+            importErr instanceof Error ? importErr.message : 'unknown error'
+          }`;
+          publishSeverity = 'warning';
+        }
+      }
+
       setMessage({
-        text: `Published to ${storageLabel}.`,
-        severity: 'success',
+        text: publishText,
+        severity: publishSeverity,
       });
     } catch (err) {
       const timedOut =
