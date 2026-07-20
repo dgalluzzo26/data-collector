@@ -215,6 +215,7 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 _RECORD_KEY_RE = re.compile(r"(^id$|_id$|^.*_key$)", re.IGNORECASE)
 _SAMPLE_LIMIT = 100
+MAX_SELECT_OPTIONS = 500
 
 
 def _guess_record_key_column(keys: list[str]) -> str:
@@ -237,7 +238,12 @@ def _column_samples(rows: list[list[str]], col_index: int, *, limit: int = _SAMP
     return samples
 
 
-def _infer_field_type(samples: list[str]) -> tuple[str, dict[str, Any] | None]:
+def _infer_field_type(
+    samples: list[str],
+    *,
+    distinct_values: set[str] | None = None,
+    total_value_count: int | None = None,
+) -> tuple[str, dict[str, Any] | None]:
     if not samples:
         return "text", None
 
@@ -261,9 +267,14 @@ def _infer_field_type(samples: list[str]) -> tuple[str, dict[str, Any] | None]:
     if url_hits / len(samples) >= 0.8:
         return "url", None
 
-    distinct = sorted({s for s in samples})
-    if len(distinct) <= 20 and len(distinct) / len(samples) < 0.5:
-        return "single_select", {"options": distinct}
+    distinct_set = distinct_values if distinct_values is not None else {s for s in samples}
+    if len(distinct_set) > MAX_SELECT_OPTIONS:
+        return "text", None
+    distinct = sorted(distinct_set)
+    value_count = total_value_count if total_value_count is not None else len(samples)
+    if len(distinct) >= 2 and len(distinct) <= MAX_SELECT_OPTIONS:
+        if len(distinct) / max(value_count, 1) < 0.5:
+            return "single_select", {"options": distinct}
 
     return "text", None
 
@@ -292,6 +303,9 @@ def infer_fields_from_csv(
     reader = csv.reader(io.StringIO(text), _csv_dialect(text))
     headers: list[str] | None = None
     data_rows_for_inference: list[list[str]] = []
+    column_distinct: list[set[str]] = []
+    column_non_empty: list[int] = []
+    column_high_cardinality: list[bool] = []
     data_row_count = 0
     logical_row = 0
 
@@ -303,12 +317,28 @@ def infer_fields_from_csv(
             headers = row
             if not any(cell.strip() for cell in headers):
                 raise ValueError(f"Row {header_row} does not contain column headers")
+            num_cols = len(headers)
+            column_distinct = [set() for _ in range(num_cols)]
+            column_non_empty = [0] * num_cols
+            column_high_cardinality = [False] * num_cols
             continue
         if not any(cell.strip() for cell in row):
             continue
         data_row_count += 1
         if len(data_rows_for_inference) < max_inference_rows:
             data_rows_for_inference.append(row)
+        for index, cell in enumerate(row):
+            if index >= len(column_distinct):
+                break
+            value = cell.strip()
+            if not value:
+                continue
+            column_non_empty[index] += 1
+            if column_high_cardinality[index]:
+                continue
+            column_distinct[index].add(value)
+            if len(column_distinct[index]) > MAX_SELECT_OPTIONS:
+                column_high_cardinality[index] = True
 
     if headers is None:
         raise ValueError(
@@ -322,7 +352,14 @@ def infer_fields_from_csv(
     fields: list[FieldDefinition] = []
     for index, (key, header) in enumerate(zip(keys, headers)):
         samples = _column_samples(data_rows, index)
-        field_type, config_json = _infer_field_type(samples)
+        if column_high_cardinality[index]:
+            field_type, config_json = "text", None
+        else:
+            field_type, config_json = _infer_field_type(
+                samples,
+                distinct_values=column_distinct[index],
+                total_value_count=column_non_empty[index],
+            )
         fields.append(
             FieldDefinition(
                 field_key=key,
@@ -344,6 +381,72 @@ def infer_fields_from_csv(
 
     suggested_record_key = _guess_record_key_column(keys)
     return fields, sample_rows, row_count, suggested_record_key
+
+
+def collect_csv_field_values(
+    parsed_rows: list[dict[str, Any]],
+    fields: list[FieldDefinition],
+) -> dict[str, set[str]]:
+    """Collect distinct non-empty CSV cell values per field key."""
+    select_fields = {
+        field.field_key
+        for field in fields
+        if field.field_type in ("single_select", "multi_select")
+    }
+    if not select_fields:
+        return {}
+
+    values: dict[str, set[str]] = {key: set() for key in select_fields}
+    for row in parsed_rows:
+        for key in select_fields:
+            raw = row.get(key)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                continue
+            if isinstance(raw, list):
+                for item in raw:
+                    if item is not None and str(item).strip():
+                        values[key].add(str(item).strip())
+            else:
+                values[key].add(str(raw).strip())
+    return values
+
+
+def expand_select_fields_for_import(
+    fields: list[FieldDefinition],
+    parsed_rows: list[dict[str, Any]],
+) -> tuple[list[FieldDefinition], set[str]]:
+    """Merge CSV values into select field options. Returns updated fields and keys left lenient."""
+    csv_values = collect_csv_field_values(parsed_rows, fields)
+    lenient_keys: set[str] = set()
+    updated_fields: list[FieldDefinition] = []
+
+    for field in fields:
+        if field.field_type not in ("single_select", "multi_select"):
+            updated_fields.append(field)
+            continue
+
+        config = dict(field.config_json or {})
+        options = [str(option) for option in (config.get("options") or [])]
+        existing = set(options)
+        extra = sorted(
+            value
+            for value in csv_values.get(field.field_key, set())
+            if value and value not in existing
+        )
+        if not extra:
+            updated_fields.append(field)
+            continue
+
+        merged = options + extra
+        if len(merged) > MAX_SELECT_OPTIONS:
+            lenient_keys.add(field.field_key)
+            updated_fields.append(field)
+            continue
+
+        config["options"] = merged
+        updated_fields.append(field.model_copy(update={"config_json": config}))
+
+    return updated_fields, lenient_keys
 
 
 def records_to_csv(field_keys: list[str], rows: list[dict[str, Any]]) -> str:

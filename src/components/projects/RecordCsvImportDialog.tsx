@@ -18,7 +18,7 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import { readCsvFile } from '../../lib/csvFile';
+import { CSV_MAX_SIZE_HELP, csvFileSizeError, readCsvFile } from '../../lib/csvFile';
 import type {
   ImportRecordsResult,
   RecordCsvColumnMapping,
@@ -104,6 +104,15 @@ export default function RecordCsvImportDialog({
 
   const handleFileSelect = async (file: File) => {
     setError(null);
+    const sizeError = csvFileSizeError(file);
+    if (sizeError) {
+      setPreview(null);
+      setColumns([]);
+      setCsvText('');
+      setError(sizeError);
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
     try {
       const csv = await readCsvFile(file);
       setCsvText(csv);
@@ -172,8 +181,14 @@ export default function RecordCsvImportDialog({
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
         <Typography variant="body2" color="text.secondary">
           Upload a CSV and map columns to your published form fields. Only matched columns with
-          checkboxes selected will be imported.
+          checkboxes selected will be imported. {CSV_MAX_SIZE_HELP}
         </Typography>
+
+        {error && (
+          <Alert severity="error" onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
 
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <TextField
@@ -294,11 +309,6 @@ export default function RecordCsvImportDialog({
           </Box>
         )}
 
-        {error && (
-          <Typography color="error" variant="body2">
-            {error}
-          </Typography>
-        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>

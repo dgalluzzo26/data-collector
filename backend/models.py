@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-# Max CSV payload size for API requests (~15 MB). Large files are streamed row-wise on the server.
-CSV_MAX_CHARS = 15_000_000
+# Max CSV payload size for API requests (~35 MB). Large files are streamed row-wise on the server.
+CSV_MAX_CHARS = 35_000_000
 
 from datetime import datetime
 from typing import Any, Literal, Optional

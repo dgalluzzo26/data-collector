@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -26,7 +27,7 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import { readCsvFile, stageCsvForImport } from '../../lib/csvFile';
+import { canStageCsvInBrowser, CSV_MAX_SIZE_HELP, csvFileSizeError, formatCsvSize, readCsvFile, stageCsvForImport } from '../../lib/csvFile';
 import type {
   CsvFormPreview,
   DuplicateKeyMode,
@@ -273,6 +274,13 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
   );
 
   const csvSelectableColumns = useMemo(() => csvColumns, [csvColumns]);
+  const csvCanStageInBrowser = csvText.length > 0 && canStageCsvInBrowser(csvText);
+
+  useEffect(() => {
+    if (!csvCanStageInBrowser && importRowsAfterPublish) {
+      setImportRowsAfterPublish(false);
+    }
+  }, [csvCanStageInBrowser, importRowsAfterPublish]);
 
   useEffect(() => {
     if (!open) return;
@@ -372,6 +380,14 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
 
   const handleCsvFileSelect = async (file: File) => {
     setError(null);
+    const sizeError = csvFileSizeError(file);
+    if (sizeError) {
+      setCsvPreview(null);
+      setCsvColumns([]);
+      setCsvText('');
+      setError(sizeError);
+      return;
+    }
     try {
       const csv = await readCsvFile(file);
       setCsvText(csv);
@@ -501,7 +517,8 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
       const wasImportCsv = creationMode === 'import_csv';
       const stagedCsvText = csvText;
       const stagedHeaderRow = headerRow;
-      const shouldStageImport = importRowsAfterPublish && stagedCsvText.trim().length > 0;
+      const shouldStageImport =
+        importRowsAfterPublish && stagedCsvText.trim().length > 0 && canStageCsvInBrowser(stagedCsvText);
       reset();
       onCreated();
       onClose();
@@ -658,8 +675,13 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
           <Box>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Upload a CSV to infer form fields from column headers and sample values. Review the
-              schema before creating the collection.
+              schema before creating the collection. {CSV_MAX_SIZE_HELP}
             </Typography>
+            {error && creationMode === 'import_csv' && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+                {error}
+              </Alert>
+            )}
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', mb: 2 }}>
               <TextField
                 label="Header row"
@@ -831,11 +853,18 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                     <Checkbox
                       checked={importRowsAfterPublish}
                       onChange={(e) => setImportRowsAfterPublish(e.target.checked)}
-                      disabled={!csvPreview || csvPreview.row_count === 0}
+                      disabled={!csvPreview || csvPreview.row_count === 0 || !csvCanStageInBrowser}
                     />
                   }
                   label="Import CSV rows after I publish"
                 />
+                {csvPreview && csvText.length > 0 && !csvCanStageInBrowser && (
+                  <Alert severity="info" sx={{ mt: 1 }}>
+                    This file is {formatCsvSize(csvText.length)} — too large to auto-import in the browser
+                    after publish. Create the form, publish it, then use <strong>Records → Import CSV</strong>{' '}
+                    for the full file.
+                  </Alert>
+                )}
               </Box>
             )}
             <StorageFields
@@ -874,7 +903,11 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
           />
         )}
 
-        {error && <span style={{ color: '#c41230', fontSize: '0.875rem' }}>{error}</span>}
+        {error && creationMode !== 'import_csv' && (
+          <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>

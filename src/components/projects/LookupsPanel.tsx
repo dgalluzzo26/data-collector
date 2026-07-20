@@ -4,6 +4,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import LinkIcon from '@mui/icons-material/Link';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
@@ -22,7 +23,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { api } from '../../api/client';
-import { readCsvFile } from '../../lib/csvFile';
+import { CSV_MAX_SIZE_HELP, csvFileSizeError, readCsvFile } from '../../lib/csvFile';
 import type { LookupProposal, LookupRow, LookupTable, ProjectDetail } from '../../types';
 import BusyButton from '../common/BusyButton';
 import BindLookupDialog from './BindLookupDialog';
@@ -168,6 +169,12 @@ export default function LookupsPanel({ project, isAdmin, onChanged }: LookupsPan
   };
 
   const importNewLookupCsv = async (file: File) => {
+    const sizeError = csvFileSizeError(file);
+    if (sizeError) {
+      setAiError(sizeError);
+      if (newLookupFileRef.current) newLookupFileRef.current.value = '';
+      return;
+    }
     const name =
       newName.trim() || file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim() || 'Imported lookup';
     setImporting(true);
@@ -186,6 +193,12 @@ export default function LookupsPanel({ project, isAdmin, onChanged }: LookupsPan
 
   const importEditorCsv = async (file: File) => {
     if (!activeLookup) return;
+    const sizeError = csvFileSizeError(file);
+    if (sizeError) {
+      setAiError(sizeError);
+      if (editorFileRef.current) editorFileRef.current.value = '';
+      return;
+    }
     if (!window.confirm('Replace all rows with this CSV? Current rows will be overwritten.')) {
       if (editorFileRef.current) editorFileRef.current.value = '';
       return;
@@ -258,9 +271,9 @@ export default function LookupsPanel({ project, isAdmin, onChanged }: LookupsPan
             </Box>
           )}
           {aiError && (
-            <Typography variant="body2" color="error" sx={{ mt: 1 }}>
+            <Alert severity="error" sx={{ mt: 1 }} onClose={() => setAiError(null)}>
               {aiError}
-            </Typography>
+            </Alert>
           )}
         </Paper>
       )}
@@ -318,6 +331,12 @@ export default function LookupsPanel({ project, isAdmin, onChanged }: LookupsPan
             }}
           />
         </Box>
+      )}
+
+      {isAdmin && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+          {CSV_MAX_SIZE_HELP}
+        </Typography>
       )}
 
       <Table size="small" component={Paper} className="page-card">
