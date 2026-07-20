@@ -198,6 +198,20 @@ export interface SyncStagedRecordsResult {
   deleted: number;
 }
 
+export interface TableConstructionRequestPayload {
+  table_name: string;
+  catalog?: string;
+  schema_name?: string;
+  description?: string;
+}
+
+export interface TableConstructionRequestResult {
+  sent: boolean;
+  recipients: string[];
+  mailto_url?: string | null;
+  message: string;
+}
+
 export interface CreateProjectPayload {
   name: string;
   description?: string;

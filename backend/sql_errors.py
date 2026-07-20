@@ -45,7 +45,13 @@ def is_permission_denied(exc: Exception) -> bool:
 
 
 def as_permission_error(exc: Exception) -> SqlPermissionError:
+    from backend import config
+
     return SqlPermissionError(
-        "You do not have permission to access this Unity Catalog resource.",
+        "You do not have permission to access this Unity Catalog resource. "
+        f"Grant USE CATALOG / USE SCHEMA / SELECT / MODIFY on "
+        f"{config.SCHEMA_FQN} to the app service principal (deployed app) "
+        f"or your user (local dev). Run ./scripts/setup.sh if metadata tables "
+        f"are missing.",
         original=exc,
     )

@@ -36,10 +36,10 @@ variables:
     default: data-collector-dev
   warehouse_id:
     description: SQL warehouse id the app connects to (bound for CAN_USE).
-    default: 62c50dd91fadb932
+    default: 6107ee75d51f8790
   catalog:
     description: Unity Catalog catalog for app metadata (keep in sync with app.yaml).
-    default: classic_stable_kremer_catalog
+    default: serverless_stable_ipan_catalog
   schema:
     description: Schema for app metadata (keep in sync with app.yaml).
     default: data_collector
@@ -55,12 +55,12 @@ targets:
     default: true
     mode: development
     workspace:
-      host: https://fevm-classic-stable-kremer.cloud.databricks.com/
+      host: https://fevm-serverless-stable-ipan.cloud.databricks.com
       root_path: ${var.deploy_folder}/${bundle.name}/${bundle.target}/${workspace.current_user.userName}
     variables:
       app_name: data-collector-dev
-      warehouse_id: 62c50dd91fadb932
-      catalog: classic_stable_kremer_catalog
+      warehouse_id: 6107ee75d51f8790
+      catalog: serverless_stable_ipan_catalog
       schema: data_collector
 
   prod:

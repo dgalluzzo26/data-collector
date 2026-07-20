@@ -161,6 +161,20 @@ class SaveFieldsRequest(BaseModel):
     fields: list[FieldDefinition]
 
 
+class TableConstructionRequestBody(BaseModel):
+    table_name: str = Field(min_length=1, max_length=128)
+    catalog: Optional[str] = Field(default=None, max_length=128)
+    schema_name: Optional[str] = Field(default=None, max_length=128)
+    description: Optional[str] = Field(default=None, max_length=4000)
+
+
+class TableConstructionRequestResult(BaseModel):
+    sent: bool
+    recipients: list[str] = Field(default_factory=list)
+    mailto_url: Optional[str] = None
+    message: str
+
+
 class RecordRow(BaseModel):
     record_id: str
     values: dict[str, Any]

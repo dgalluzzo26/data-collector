@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.routes import ai, branding, genie, health, lookups, me, projects, uc
+from backend.routes import ai, branding, genie, health, lookups, me, projects, table_requests, uc
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 
 logging.basicConfig(level=logging.INFO)
@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 def _run_startup_migrations() -> None:
     try:
         from backend import config
-        from backend.db import get_connection
+        from backend.db import get_metadata_connection
         from backend.provisioning import run_migrations
 
-        with get_connection() as conn:
+        with get_metadata_connection() as conn:
             with conn.cursor() as cur:
                 run_migrations(cur, config.CATALOG, config.SCHEMA)
     except Exception as exc:
@@ -62,6 +62,7 @@ app.include_router(lookups.router, prefix="/api")
 app.include_router(genie.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(uc.router, prefix="/api")
+app.include_router(table_requests.router, prefix="/api")
 
 dist_dir = Path(__file__).resolve().parent.parent / "dist"
 if dist_dir.exists():

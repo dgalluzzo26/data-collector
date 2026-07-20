@@ -15,15 +15,18 @@ import Typography from '@mui/material/Typography';
 import CircularProgress from '@mui/material/CircularProgress';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import { api } from '../../api/client';
 import { useProjects } from '../../hooks/useProjects';
 import type { ProjectSummary } from '../../types';
 import CreateProjectWizard from './CreateProjectWizard';
+import RequestTableDialog from './RequestTableDialog';
 import DataEntryUrl from '../common/DataEntryUrl';
 
 export default function CollectionsView() {
   const { projects, loading, error, refresh } = useProjects();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [requestTableOpen, setRequestTableOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -57,9 +60,18 @@ export default function CollectionsView() {
             Define forms, manage access, and collect data into Unity Catalog.
           </Typography>
         </div>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>
-          New form
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button
+            variant="outlined"
+            startIcon={<EmailOutlinedIcon />}
+            onClick={() => setRequestTableOpen(true)}
+          >
+            Request new table
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>
+            New form
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -167,6 +179,8 @@ export default function CollectionsView() {
         onClose={() => setDialogOpen(false)}
         onCreated={refresh}
       />
+
+      <RequestTableDialog open={requestTableOpen} onClose={() => setRequestTableOpen(false)} />
     </Box>
   );
 }

@@ -21,6 +21,8 @@ import type {
   RecordRow,
   ImportRecordsResult,
   SyncStagedRecordsResult,
+  TableConstructionRequestPayload,
+  TableConstructionRequestResult,
   UcTablePreview,
   UserInfo,
   WorkspaceUser,
@@ -412,5 +414,12 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) },
       'Applying changes…',
       120_000,
+    ),
+
+  requestTableConstruction: (body: TableConstructionRequestPayload) =>
+    request<TableConstructionRequestResult>(
+      '/table-construction-requests',
+      { method: 'POST', body: JSON.stringify(body) },
+      'Sending table request…',
     ),
 };

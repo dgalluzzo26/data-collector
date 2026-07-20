@@ -1,10 +1,19 @@
 """Run Data Collector metadata DDL against a Databricks SQL warehouse."""
 
-from backend.schema_ddl import TABLES, _table_fqn, ddl_statements, is_migration, migration_statements
+from backend.schema_ddl import TABLES, _schema_fqn, _table_fqn, ddl_statements, is_migration, migration_statements
+
+
+def ensure_metadata_schema(cursor, catalog: str, schema: str) -> None:
+    """Create the metadata schema if it does not exist."""
+    try:
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_schema_fqn(catalog, schema)}")
+    except Exception as exc:
+        print(f"  schema ensure skipped: {exc}")
 
 
 def ensure_metadata_tables(cursor, catalog: str, schema: str) -> None:
     """Create any metadata tables added since the deployment was first provisioned."""
+    ensure_metadata_schema(cursor, catalog, schema)
     for table, columns in TABLES.items():
         try:
             cursor.execute(
