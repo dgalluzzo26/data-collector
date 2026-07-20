@@ -15,7 +15,14 @@ export interface StagedCsvImport {
 }
 
 export function stageCsvForImport(projectId: string, payload: StagedCsvImport): void {
-  sessionStorage.setItem(`${CSV_IMPORT_STORAGE_PREFIX}${projectId}`, JSON.stringify(payload));
+  try {
+    sessionStorage.setItem(`${CSV_IMPORT_STORAGE_PREFIX}${projectId}`, JSON.stringify(payload));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to stage CSV';
+    throw new Error(
+      `${message}. The CSV may be too large to import automatically after publish — publish first, then use Records → Import CSV.`,
+    );
+  }
 }
 
 export function getStagedCsvImport(projectId: string): StagedCsvImport | null {

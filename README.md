@@ -265,7 +265,18 @@ npm run deploy          # dev → /Workspace/DBRX-Apps/data-collector/dev/<your-
 npm run deploy:prod     # prod
 ```
 
-The script will:
+**Manual apps deploy** (sync + `databricks apps deploy` without the full bundle):
+
+```bash
+npm run apps:deploy     # build, sync dist/backend only, deploy dev app
+npm run sync:workspace:watch   # watch sync (no package.json — avoids npm ENOTEMPTY on deploy)
+```
+
+Do **not** run bare `databricks sync . <workspace-path>` — it follows `.gitignore` only, uploads
+`package.json`, and the app runtime will run `npm install` (often failing with `ENOTEMPTY` if
+`node_modules` is partial). Use `scripts/sync_workspace.sh` instead.
+
+`npm run deploy` will:
 
 1. `mkdirs` the deploy folder (e.g. `/Workspace/DBRX-Apps`)
 2. Read `warehouse_id`, `catalog`, `schema`, and `app_name` from `databricks.yml` for the target
