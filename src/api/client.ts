@@ -6,6 +6,7 @@ import type {
   AppBranding,
   BindLookupPayload,
   CreateProjectPayload,
+  CsvFormPreview,
   FieldDefinition,
   GenieAskResponse,
   GenieStatus,
@@ -20,6 +21,7 @@ import type {
   RecordAuditEntry,
   RecordRow,
   ImportRecordsResult,
+  RecordCsvPreview,
   SyncStagedRecordsResult,
   UcTablePreview,
   UserInfo,
@@ -27,6 +29,11 @@ import type {
 } from '../types';
 
 const BASE = '/api';
+
+/** Preview/infer endpoints parse the full CSV payload. */
+const CSV_PREVIEW_TIMEOUT_MS = 120_000;
+/** Record/lookup imports may insert thousands of rows server-side. */
+const CSV_IMPORT_TIMEOUT_MS = 600_000;
 
 export class ApiValidationError extends Error {
   fieldErrors: Record<string, string>;
@@ -182,6 +189,13 @@ export const api = {
     ),
 
   listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading forms…'),
+  previewCsv: (csv: string, headerRow = 1) =>
+    request<CsvFormPreview>(
+      '/projects/preview-csv',
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+      CSV_PREVIEW_TIMEOUT_MS,
+    ),
   createProject: (body: CreateProjectPayload) =>
     request<ProjectDetail>(
       '/projects',
@@ -286,11 +300,26 @@ export const api = {
       endBusy();
     }
   },
-  importRecordsCsv: (id: string, csv: string) =>
+  previewRecordsCsv: (id: string, csv: string, headerRow = 1) =>
+    request<RecordCsvPreview>(
+      `/projects/${id}/records/preview-csv`,
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+      CSV_PREVIEW_TIMEOUT_MS,
+    ),
+  importRecordsCsv: (id: string, csv: string, headerRow = 1, fieldKeys?: string[]) =>
     request<ImportRecordsResult>(
       `/projects/${id}/records/import`,
-      { method: 'POST', body: JSON.stringify({ csv }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          csv,
+          header_row: headerRow,
+          ...(fieldKeys ? { field_keys: fieldKeys } : {}),
+        }),
+      },
       'Importing records…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
 
   getGenieStatus: (projectId: string) =>
@@ -347,12 +376,14 @@ export const api = {
       `/projects/${projectId}/lookups/import`,
       { method: 'POST', body: JSON.stringify({ name, csv }) },
       'Importing lookup…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
   importLookupRowsCsv: (projectId: string, lookupId: string, csv: string) =>
     request<LookupRow[]>(
       `/projects/${projectId}/lookups/${lookupId}/import`,
       { method: 'POST', body: JSON.stringify({ csv }) },
       'Importing rows…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
   getLookupRows: (projectId: string, lookupId: string) =>
     request<LookupRow[]>(`/projects/${projectId}/lookups/${lookupId}/rows`, undefined, 'Loading lookup rows…'),

@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 
 from backend import audit_repository, config, repository, uc_grants
 from backend import auth, lookup_repository
-from backend.csv_util import parse_records_csv, records_to_csv
+from backend.csv_util import infer_fields_from_csv, parse_records_csv, preview_records_csv, records_to_csv
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
@@ -15,14 +15,19 @@ from backend.models import (
     AddMemberResponse,
     CreateProjectRequest,
     CreateRecordRequest,
+    CsvFormPreview,
     FieldDefinition,
     ImportRecordError,
     ImportRecordsCsvRequest,
     ImportRecordsResult,
+    InferredColumn,
+    PreviewCsvRequest,
+    PreviewRecordsCsvRequest,
     ProjectDetail,
     ProjectMember,
     ProjectSummary,
     RecordAuditEntry,
+    RecordCsvPreview,
     RecordRow,
     SaveFieldsRequest,
     SyncStagedRecordsResult,
@@ -117,6 +122,7 @@ def _detail(project_id: str, role) -> ProjectDetail:
         storage_mode=project.get("storage_mode") or "managed",
         record_key_column=project.get("record_key_column"),
         record_sync_mode=project.get("record_sync_mode"),
+        duplicate_key_mode=project.get("duplicate_key_mode") or "retain",
         staged_change_count=(
             repository.count_staged_changes(project_id)
             if project.get("record_sync_mode") == "staged"
@@ -142,6 +148,40 @@ def list_projects(request: Request):
     user = auth.get_user_email(request)
     rows = repository.list_projects_for_user(user)
     return [ProjectSummary(**project_to_summary(row, row.get("role"))) for row in rows]
+
+
+@router.post("/preview-csv", response_model=CsvFormPreview)
+def preview_csv(body: PreviewCsvRequest, request: Request):
+    from backend import auth
+
+    auth.get_user_email(request)
+    try:
+        fields, sample_rows, row_count, suggested_record_key = infer_fields_from_csv(
+            body.csv,
+            header_row=body.header_row,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    columns = [
+        InferredColumn(
+            field_key=f.field_key,
+            label=f.label,
+            field_type=f.field_type,
+            config_json=f.config_json,
+            sort_order=f.sort_order,
+            is_required=f.is_required,
+            included=True,
+        )
+        for f in fields
+    ]
+    return CsvFormPreview(
+        columns=columns,
+        sample_rows=sample_rows,
+        row_count=row_count,
+        suggested_record_key=suggested_record_key,
+        header_row=body.header_row,
+    )
 
 
 @router.post("", response_model=ProjectDetail, status_code=201)
@@ -179,6 +219,7 @@ def create_project(body: CreateProjectRequest, request: Request):
             storage_type=body.storage_type,
             storage_mode=body.storage_mode,
             record_key_column=body.record_key_column.strip() if body.record_key_column else None,
+            duplicate_key_mode=body.duplicate_key_mode,
             target_catalog=storage["target_catalog"],
             target_schema=storage["target_schema"],
             target_table=storage["target_table"],
@@ -266,6 +307,21 @@ def update_project(project_id: str, body: UpdateProjectRequest, request: Request
             raise HTTPException(
                 status_code=400,
                 detail="Record sync mode applies only to Unity Catalog collections",
+            )
+
+    if "duplicate_key_mode" in updates:
+        project = repository.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if project.get("status") == "published":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot change duplicate key handling after the collection is published",
+            )
+        if not project.get("record_key_column"):
+            raise HTTPException(
+                status_code=400,
+                detail="Duplicate key handling applies only when a record key column is configured",
             )
 
     if updates:
@@ -519,16 +575,31 @@ def create_record(project_id: str, body: CreateRecordRequest, request: Request, 
             if errors:
                 raise HTTPException(status_code=422, detail={"field_errors": errors})
             try:
+                existing = None
+                record_key_col = repository._record_key_column(project)
+                if record_key_col:
+                    record_id = repository._resolve_new_record_id(project, body.values)
+                    if repository._record_id_is_taken(project, record_id):
+                        existing = repository.get_record(project, fields, record_id)
                 row = repository.create_record(project, fields, body.values, email)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             timer.mark("create_record_ms")
-            audit_repository.log_record_created(
-                project_id,
-                row["record_id"],
-                body.values,
-                changed_by=email,
-            )
+            if existing:
+                audit_repository.log_record_updated(
+                    project_id,
+                    row["record_id"],
+                    existing["values"],
+                    body.values,
+                    changed_by=email,
+                )
+            else:
+                audit_repository.log_record_created(
+                    project_id,
+                    row["record_id"],
+                    body.values,
+                    changed_by=email,
+                )
             timer.mark("audit_ms")
             timer.set_extra(
                 project_id=project_id,
@@ -656,6 +727,32 @@ def export_records(project_id: str, request: Request):
     )
 
 
+@router.post("/{project_id}/records/preview-csv", response_model=RecordCsvPreview)
+def preview_records_csv_route(project_id: str, body: PreviewRecordsCsvRequest, request: Request):
+    require_role(project_id, request, "editor")
+    project = repository.get_project(project_id)
+    if not project or project["status"] != "published":
+        raise HTTPException(status_code=400, detail="Project must be published before importing records")
+    fields = repository.list_fields(project_id, published_only=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Published form has no fields")
+    try:
+        columns, unmatched, sample_rows, row_count = preview_records_csv(
+            body.csv,
+            fields,
+            header_row=body.header_row,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RecordCsvPreview(
+        columns=columns,
+        unmatched_csv_headers=unmatched,
+        sample_rows=sample_rows,
+        row_count=row_count,
+        header_row=body.header_row,
+    )
+
+
 @router.post("/{project_id}/records/import", response_model=ImportRecordsResult)
 def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Request):
     user, _ = require_role(project_id, request, "editor")
@@ -664,21 +761,35 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
         if not project or project["status"] != "published":
             raise HTTPException(status_code=400, detail="Project must be published before importing records")
         fields = repository.list_fields(project_id, published_only=True)
-        field_keys = [f.field_key for f in fields]
+        field_keys = body.field_keys if body.field_keys is not None else [f.field_key for f in fields]
         try:
-            parsed = parse_records_csv(body.csv, field_keys)
+            parsed = parse_records_csv(
+                body.csv,
+                [f.field_key for f in fields],
+                header_row=body.header_row,
+                included_field_keys=field_keys,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         lookup_allowed = build_lookup_allowed(fields, project_id)
-        created = 0
         failed: list[ImportRecordError] = []
-        for row_num, values in enumerate(parsed, start=2):
+        valid_rows: list[tuple[int, dict[str, Any]]] = []
+        record_key_col = project.get("record_key_column")
+        for row_num, values in enumerate(parsed, start=body.header_row + 1):
             errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
             if errors:
                 failed.append(ImportRecordError(row=row_num, field_errors=errors))
                 continue
-            row = repository.create_record(project, fields, values, user)
-            audit_repository.log_record_created(project_id, row["record_id"], values, changed_by=user)
-            created += 1
-    return ImportRecordsResult(created=created, failed=failed)
+            try:
+                repository._resolve_new_record_id(project, values)
+            except ValueError as exc:
+                field_key = record_key_col or "_import"
+                failed.append(ImportRecordError(row=row_num, field_errors={field_key: str(exc)}))
+                continue
+            valid_rows.append((row_num, values))
+
+        created, updated, skipped = repository.bulk_import_records(
+            project, fields, valid_rows, user
+        )
+    return ImportRecordsResult(created=created, updated=updated, skipped=skipped, failed=failed)
