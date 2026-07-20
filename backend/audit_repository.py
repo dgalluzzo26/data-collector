@@ -117,6 +117,57 @@ def log_record_updated(
     _insert_audit_rows(rows)
 
 
+def log_records_created_batch(
+    project_id: str,
+    records: list[tuple[str, dict[str, Any]]],
+    *,
+    changed_by: str,
+) -> None:
+    if not records:
+        return
+    changed_at = _now()
+    rows: list[tuple[Any, ...]] = []
+    for record_id, values in records:
+        changes = [(key, None, val) for key, val in values.items()]
+        rows.extend(
+            _build_audit_rows(
+                project_id,
+                record_id,
+                changes,
+                changed_by=changed_by,
+                changed_at=changed_at,
+            )
+        )
+    for i in range(0, len(rows), 500):
+        _insert_audit_rows(rows[i : i + 500])
+
+
+def log_records_updated_batch(
+    project_id: str,
+    updates: list[tuple[str, dict[str, Any], dict[str, Any]]],
+    *,
+    changed_by: str,
+) -> None:
+    if not updates:
+        return
+    changed_at = _now()
+    rows: list[tuple[Any, ...]] = []
+    for record_id, old_values, new_values in updates:
+        keys = set(old_values) | set(new_values)
+        changes = [(key, old_values.get(key), new_values.get(key)) for key in keys]
+        rows.extend(
+            _build_audit_rows(
+                project_id,
+                record_id,
+                changes,
+                changed_by=changed_by,
+                changed_at=changed_at,
+            )
+        )
+    for i in range(0, len(rows), 500):
+        _insert_audit_rows(rows[i : i + 500])
+
+
 def log_record_deleted(
     project_id: str,
     record_id: str,

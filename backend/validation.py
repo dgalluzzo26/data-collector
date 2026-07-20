@@ -21,6 +21,38 @@ def _is_empty(value: Any) -> bool:
     return False
 
 
+def coerce_value_for_storage(field: FieldDefinition, value: Any) -> Any:
+    """Normalize record values before writing to typed SQL columns."""
+    if value is None:
+        return None
+    if isinstance(value, (list, dict)):
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            if field.field_type in ("number", "boolean", "date", "datetime"):
+                return None
+            return value
+        if field.field_type == "number":
+            try:
+                return float(stripped.replace(",", ""))
+            except ValueError:
+                return value
+        if field.field_type == "boolean":
+            lower = stripped.lower()
+            if lower in ("true", "yes", "1", "y"):
+                return True
+            if lower in ("false", "no", "0", "n"):
+                return False
+        return value
+
+    if field.field_type == "number" and isinstance(value, (int, float)):
+        return float(value)
+
+    return value
+
+
 def _is_valid_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     return bool(parsed.scheme and parsed.netloc)
