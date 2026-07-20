@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import UploadIcon from '@mui/icons-material/Upload';
@@ -17,11 +17,12 @@ import { useLookupOptions } from '../../hooks/useLookupOptions';
 import { useInvalidateRecords, useRecords } from '../../hooks/useRecords';
 import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
 import { buildRecordGridColumns } from '../../lib/recordGridColumns';
-import { readCsvFile } from '../../lib/csvFile';
+import { formatImportResult } from '../../lib/importRecords';
 import type { ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
 import { validateRecordValues } from '../../lib/recordValidation';
 import BusyButton from '../common/BusyButton';
 import DynamicForm from './DynamicForm';
+import RecordCsvImportDialog from './RecordCsvImportDialog';
 
 interface RecordsPanelProps {
   project: ProjectDetail;
@@ -59,6 +60,10 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
     () => selectPublishedFields(project).sort((a, b) => a.sort_order - b.sort_order),
     [project.fields, project.schema_version],
   );
+  const fieldLabels = useMemo(
+    () => Object.fromEntries(publishedFields.map((field) => [field.field_key, field.label])),
+    [publishedFields],
+  );
   const recordsEnabled = project.status === 'published';
   const isStagedSync =
     project.storage_type === 'uc_delta' && project.record_sync_mode === 'staged';
@@ -89,10 +94,9 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [auditLog, setAuditLog] = useState<RecordAuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const importFileRef = useRef<HTMLInputElement>(null);
 
   const refreshAll = useCallback(async () => {
     await invalidateRecords(project.project_id, project.schema_version);
@@ -217,34 +221,6 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
     }
   };
 
-  const importCsv = async (file: File) => {
-    setImporting(true);
-    setImportMessage(null);
-    try {
-      const csv = await readCsvFile(file);
-      const result = await api.importRecordsCsv(project.project_id, csv);
-      const failedCount = result.failed.length;
-      if (failedCount === 0) {
-        setImportMessage(`Imported ${result.created} record${result.created === 1 ? '' : 's'}.`);
-      } else {
-        const detail = result.failed
-          .slice(0, 3)
-          .map((failed) => `row ${failed.row}`)
-          .join(', ');
-        const suffix = failedCount > 3 ? ` (+${failedCount - 3} more)` : '';
-        setImportMessage(
-          `Imported ${result.created}; ${failedCount} row${failedCount === 1 ? '' : 's'} failed (${detail}${suffix}).`,
-        );
-      }
-      await refreshAll();
-    } catch (err) {
-      setImportMessage(err instanceof Error ? err.message : 'CSV import failed');
-    } finally {
-      setImporting(false);
-      if (importFileRef.current) importFileRef.current.value = '';
-    }
-  };
-
   const save = async () => {
     const errors = validateRecordValues(publishedFields, formValues, lookupAllowed);
     setFieldErrors(errors);
@@ -329,26 +305,14 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
           )}
           {canEdit && (
             <>
-              <input
-                ref={importFileRef}
-                type="file"
-                accept=".csv,text/csv"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void importCsv(file);
-                }}
-              />
-              <BusyButton
+              <Button
                 variant="outlined"
                 size="small"
                 startIcon={<UploadIcon />}
-                onClick={() => importFileRef.current?.click()}
-                busy={importing}
-                busyLabel="Importing…"
+                onClick={() => setImportDialogOpen(true)}
               >
                 Import CSV
-              </BusyButton>
+              </Button>
               <Button variant="contained" size="small" onClick={openNew}>
                 New record
               </Button>
@@ -367,7 +331,11 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
       )}
 
       {importMessage && (
-        <Alert severity={importMessage.includes('failed') ? 'warning' : 'success'} onClose={() => setImportMessage(null)}>
+        <Alert
+          severity={importMessage.includes('failed') ? 'warning' : 'success'}
+          onClose={() => setImportMessage(null)}
+          sx={{ whiteSpace: 'pre-line' }}
+        >
           {importMessage}
         </Alert>
       )}
@@ -481,6 +449,17 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
           )}
         </Box>
       </Drawer>
+
+      <RecordCsvImportDialog
+        open={importDialogOpen}
+        projectId={project.project_id}
+        recordKeyColumn={project.record_key_column}
+        onClose={() => setImportDialogOpen(false)}
+        onImported={async (result) => {
+          setImportMessage(formatImportResult(result, fieldLabels));
+          await refreshAll();
+        }}
+      />
     </Box>
   );
 }

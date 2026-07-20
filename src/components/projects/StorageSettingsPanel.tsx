@@ -12,8 +12,9 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
 import { hasSyncLocation, showGenieTab } from '../../lib/genie';
-import type { AppConfig, ProjectDetail, RecordSyncMode, StorageType } from '../../types';
+import type { AppConfig, DuplicateKeyMode, ProjectDetail, RecordSyncMode, StorageType } from '../../types';
 import BusyButton from '../common/BusyButton';
+import StorageSchemaSelect from '../common/StorageSchemaSelect';
 
 interface StorageSettingsPanelProps {
   project: ProjectDetail;
@@ -31,11 +32,15 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
   const [recordSyncMode, setRecordSyncMode] = useState<RecordSyncMode | ''>(
     project.record_sync_mode ?? '',
   );
+  const [duplicateKeyMode, setDuplicateKeyMode] = useState<DuplicateKeyMode>(
+    project.duplicate_key_mode ?? 'retain',
+  );
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lakebaseConfigured, setLakebaseConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingSync, setSavingSync] = useState(false);
   const [savingSyncMode, setSavingSyncMode] = useState(false);
+  const [savingDuplicateKeyMode, setSavingDuplicateKeyMode] = useState(false);
   const [genieSyncing, setGenieSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +65,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     setSyncSchema(project.sync_schema ?? '');
     setSyncTable(project.sync_table ?? '');
     setRecordSyncMode(project.record_sync_mode ?? '');
+    setDuplicateKeyMode(project.duplicate_key_mode ?? 'retain');
   }, [
     project.storage_type,
     project.target_catalog,
@@ -69,6 +75,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     project.sync_schema,
     project.sync_table,
     project.record_sync_mode,
+    project.duplicate_key_mode,
   ]);
 
   useEffect(() => {
@@ -142,6 +149,21 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSavingSyncMode(false);
+    }
+  };
+
+  const saveDuplicateKeyMode = async () => {
+    setSavingDuplicateKeyMode(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await api.updateProject(project.project_id, { duplicate_key_mode: duplicateKeyMode });
+      setMessage('Duplicate key handling saved.');
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSavingDuplicateKeyMode(false);
     }
   };
 
@@ -223,7 +245,12 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
         <TextField
           label={isLakebase ? 'Database' : 'Catalog'}
           value={catalog}
-          onChange={(e) => setCatalog(e.target.value)}
+          onChange={(e) => {
+            setCatalog(e.target.value);
+            if (!isLakebase) {
+              setSchema('');
+            }
+          }}
           disabled={!isDraft || isLakebase}
           helperText={
             isLakebase
@@ -234,19 +261,19 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
           }
           size="small"
         />
-        <TextField
-          label="Schema"
+        <StorageSchemaSelect
+          storageType={isLakebase ? 'lakebase' : 'uc_delta'}
+          catalog={catalog}
           value={schema}
-          onChange={(e) => setSchema(e.target.value)}
+          onChange={setSchema}
           disabled={!isDraft}
           helperText={
             isDraft
               ? isLakebase
-                ? 'Postgres schema (created on publish if missing)'
+                ? undefined
                 : `Default for new forms: ${appConfig?.default_data_schema || '…'}`
               : undefined
           }
-          size="small"
         />
         <TextField
           label="Table"
@@ -336,6 +363,64 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
                 disabled={!recordSyncMode}
               >
                 Save record sync mode
+              </BusyButton>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {project.record_key_column && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Duplicate record keys
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            When a new or imported row uses the same primary key as an existing record (
+            <strong>{project.record_key_column}</strong>), choose whether to keep the existing row
+            or replace it.
+          </Typography>
+          {!isDraft && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Mode locked after publish:{' '}
+              <strong>
+                {project.duplicate_key_mode === 'overwrite'
+                  ? 'Overwrite existing rows'
+                  : 'Keep existing rows (skip duplicates)'}
+              </strong>
+            </Alert>
+          )}
+          <FormControl component="fieldset" disabled={!isDraft} sx={{ width: '100%' }}>
+            <RadioGroup
+              value={duplicateKeyMode}
+              onChange={(e) => setDuplicateKeyMode(e.target.value as DuplicateKeyMode)}
+            >
+              <FormControlLabel
+                value="retain"
+                control={<Radio />}
+                label="Keep existing rows (skip duplicates)"
+              />
+              <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
+                CSV import and manual entry leave the existing record unchanged.
+              </FormHelperText>
+              <FormControlLabel
+                value="overwrite"
+                control={<Radio />}
+                label="Overwrite existing rows with new values"
+              />
+              <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
+                Matching keys update the existing record with the incoming values.
+              </FormHelperText>
+            </RadioGroup>
+          </FormControl>
+          {isDraft && (
+            <Box sx={{ mt: 2 }}>
+              <BusyButton
+                variant="contained"
+                onClick={saveDuplicateKeyMode}
+                busy={savingDuplicateKeyMode}
+                busyLabel="Saving…"
+              >
+                Save duplicate key handling
               </BusyButton>
             </Box>
           )}

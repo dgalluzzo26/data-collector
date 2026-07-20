@@ -21,6 +21,7 @@ import type {
   RecordAuditEntry,
   RecordRow,
   ImportRecordsResult,
+  RecordCsvPreview,
   SyncStagedRecordsResult,
   UcTablePreview,
   UserInfo,
@@ -293,10 +294,23 @@ export const api = {
       endBusy();
     }
   },
-  importRecordsCsv: (id: string, csv: string, headerRow = 1) =>
+  previewRecordsCsv: (id: string, csv: string, headerRow = 1) =>
+    request<RecordCsvPreview>(
+      `/projects/${id}/records/preview-csv`,
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+    ),
+  importRecordsCsv: (id: string, csv: string, headerRow = 1, fieldKeys?: string[]) =>
     request<ImportRecordsResult>(
       `/projects/${id}/records/import`,
-      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          csv,
+          header_row: headerRow,
+          ...(fieldKeys ? { field_keys: fieldKeys } : {}),
+        }),
+      },
       'Importing records…',
     ),
 

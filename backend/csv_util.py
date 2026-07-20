@@ -94,11 +94,82 @@ def _header_row_index(header_row: int, total_rows: int) -> int:
     return header_row - 1
 
 
+def _map_csv_columns_to_field_keys(
+    headers: list[str],
+    header_keys: list[str],
+    field_keys: list[str],
+) -> dict[str, int]:
+    """Map form field keys to CSV column indices."""
+    key_index: dict[str, int] = {}
+    for idx, hk in enumerate(header_keys):
+        if hk in field_keys and hk not in key_index:
+            key_index[hk] = idx
+            continue
+        for fk in field_keys:
+            if fk in key_index:
+                continue
+            if slugify(fk) == hk or slugify(headers[idx]) == slugify(fk):
+                key_index[fk] = idx
+                break
+    return key_index
+
+
+def preview_records_csv(
+    csv_text: str,
+    fields: list[FieldDefinition],
+    *,
+    header_row: int = 1,
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]], int]:
+    """Preview CSV import against published form fields."""
+    parsed_rows = _read_csv_rows(csv_text, keep_empty=True)
+    if not parsed_rows:
+        raise ValueError("CSV is empty")
+
+    header_idx = _header_row_index(header_row, len(parsed_rows))
+    headers = [h.strip() for h in parsed_rows[header_idx]]
+    if not any(headers):
+        raise ValueError(f"Row {header_row} does not contain column headers")
+    header_keys = [_column_key(h, i) for i, h in enumerate(headers)]
+    field_keys = [f.field_key for f in fields]
+    key_index = _map_csv_columns_to_field_keys(headers, header_keys, field_keys)
+
+    columns: list[dict[str, Any]] = []
+    for field in fields:
+        matched = field.field_key in key_index
+        col_idx = key_index.get(field.field_key)
+        columns.append(
+            {
+                "field_key": field.field_key,
+                "label": field.label,
+                "csv_header": headers[col_idx] if col_idx is not None else None,
+                "matched": matched,
+                "included": matched,
+            }
+        )
+
+    matched_indices = set(key_index.values())
+    unmatched_csv_headers = [
+        headers[i] for i in range(len(headers)) if i not in matched_indices and headers[i].strip()
+    ]
+
+    data_rows = [row for row in parsed_rows[header_idx + 1 :] if any(cell.strip() for cell in row)]
+    sample_rows: list[dict[str, Any]] = []
+    for row in data_rows[:5]:
+        values: dict[str, Any] = {}
+        for fk, col_idx in key_index.items():
+            values[fk] = row[col_idx].strip() if col_idx < len(row) else ""
+        if any(str(v) for v in values.values()):
+            sample_rows.append(values)
+
+    return columns, unmatched_csv_headers, sample_rows, len(data_rows)
+
+
 def parse_records_csv(
     csv_text: str,
     field_keys: list[str],
     *,
     header_row: int = 1,
+    included_field_keys: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse CSV into record value dicts keyed by field_key."""
     parsed_rows = _read_csv_rows(csv_text, keep_empty=True)
@@ -111,16 +182,10 @@ def parse_records_csv(
         raise ValueError(f"Row {header_row} does not contain column headers")
     header_keys = [_column_key(h, i) for i, h in enumerate(headers)]
 
-    # Map CSV columns to known field keys (match by field_key or slugified header).
-    key_index: dict[str, int] = {}
-    for idx, hk in enumerate(header_keys):
-        if hk in field_keys:
-            key_index[hk] = idx
-        else:
-            for fk in field_keys:
-                if slugify(fk) == hk or slugify(headers[idx]) == slugify(fk):
-                    key_index[fk] = idx
-                    break
+    key_index = _map_csv_columns_to_field_keys(headers, header_keys, field_keys)
+    if included_field_keys is not None:
+        allowed = set(included_field_keys)
+        key_index = {fk: idx for fk, idx in key_index.items() if fk in allowed}
 
     if not key_index:
         raise ValueError(

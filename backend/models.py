@@ -13,6 +13,7 @@ GenieStatus = Literal["disabled", "pending", "ready", "error"]
 StorageType = Literal["uc_delta", "lakebase"]
 StorageMode = Literal["managed", "existing_uc"]
 RecordSyncMode = Literal["immediate", "staged"]
+DuplicateKeyMode = Literal["retain", "overwrite"]
 FieldType = Literal[
     "text",
     "textarea",
@@ -74,6 +75,7 @@ class ProjectDetail(ProjectSummary):
     storage_mode: StorageMode = "managed"
     record_key_column: Optional[str] = None
     record_sync_mode: Optional[RecordSyncMode] = None
+    duplicate_key_mode: DuplicateKeyMode = "retain"
     staged_change_count: int = 0
     sync_catalog: Optional[str] = None
     sync_schema: Optional[str] = None
@@ -119,6 +121,7 @@ class CreateProjectRequest(BaseModel):
     storage_type: StorageType = "uc_delta"
     storage_mode: StorageMode = "managed"
     record_key_column: Optional[str] = Field(default=None, max_length=128)
+    duplicate_key_mode: DuplicateKeyMode = "retain"
     target_catalog: Optional[str] = None
     target_schema: Optional[str] = None
     target_table: Optional[str] = None
@@ -137,6 +140,7 @@ class UpdateProjectRequest(BaseModel):
     sync_schema: Optional[str] = Field(default=None, max_length=128)
     sync_table: Optional[str] = Field(default=None, max_length=128)
     record_sync_mode: Optional[RecordSyncMode] = None
+    duplicate_key_mode: Optional[DuplicateKeyMode] = None
 
 
 class WorkspaceUser(BaseModel):
@@ -190,6 +194,28 @@ class RecordAuditEntry(BaseModel):
 class ImportRecordsCsvRequest(BaseModel):
     csv: str = Field(min_length=1, max_length=2_000_000)
     header_row: int = Field(default=1, ge=1)
+    field_keys: Optional[list[str]] = None
+
+
+class PreviewRecordsCsvRequest(BaseModel):
+    csv: str = Field(min_length=1, max_length=2_000_000)
+    header_row: int = Field(default=1, ge=1)
+
+
+class RecordCsvColumnMapping(BaseModel):
+    field_key: str
+    label: str
+    csv_header: Optional[str] = None
+    matched: bool
+    included: bool = True
+
+
+class RecordCsvPreview(BaseModel):
+    columns: list[RecordCsvColumnMapping]
+    unmatched_csv_headers: list[str] = Field(default_factory=list)
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int
+    header_row: int = 1
 
 
 class ImportRecordError(BaseModel):
@@ -199,6 +225,8 @@ class ImportRecordError(BaseModel):
 
 class ImportRecordsResult(BaseModel):
     created: int
+    updated: int = 0
+    skipped: int = 0
     failed: list[ImportRecordError] = Field(default_factory=list)
 
 

@@ -29,6 +29,7 @@ import { api } from '../../api/client';
 import { readCsvFile, stageCsvForImport } from '../../lib/csvFile';
 import type {
   CsvFormPreview,
+  DuplicateKeyMode,
   FieldDefinition,
   FieldType,
   InferredColumn,
@@ -36,6 +37,7 @@ import type {
   UcTablePreview,
 } from '../../types';
 import BusyButton from '../common/BusyButton';
+import StorageSchemaSelect from '../common/StorageSchemaSelect';
 import UcTableSelector from '../common/UcTableSelector';
 
 interface CreateProjectDialogProps {
@@ -45,6 +47,37 @@ interface CreateProjectDialogProps {
 }
 
 type CreationMode = 'new_table' | 'existing_uc_table' | 'import_csv';
+
+function DuplicateKeyModeField({
+  value,
+  onChange,
+}: {
+  value: DuplicateKeyMode;
+  onChange: (value: DuplicateKeyMode) => void;
+}) {
+  return (
+    <FormControl component="fieldset" sx={{ mt: 2, width: '100%' }}>
+      <Typography variant="subtitle2" gutterBottom>
+        Duplicate record keys
+      </Typography>
+      <RadioGroup value={value} onChange={(e) => onChange(e.target.value as DuplicateKeyMode)}>
+        <FormControlLabel
+          value="retain"
+          control={<Radio />}
+          label="Keep existing rows (skip duplicates)"
+        />
+        <FormControlLabel
+          value="overwrite"
+          control={<Radio />}
+          label="Overwrite existing rows with new values"
+        />
+      </RadioGroup>
+      <FormHelperText>
+        Applies when importing CSV data or creating records with an existing primary key.
+      </FormHelperText>
+    </FormControl>
+  );
+}
 
 const CSV_FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'text', label: 'Text' },
@@ -168,16 +201,26 @@ function StorageFields({
           <TextField
             label={storageType === 'lakebase' ? 'Database' : 'Catalog'}
             value={targetCatalog}
-            onChange={(e) => setTargetCatalog(e.target.value)}
+            onChange={(e) => {
+              setTargetCatalog(e.target.value);
+              if (storageType === 'uc_delta') {
+                setTargetSchema('');
+              }
+            }}
             size="small"
             disabled={storageType === 'lakebase'}
             helperText={storageType === 'lakebase' ? 'From Lakebase app resource (PGDATABASE)' : undefined}
           />
-          <TextField
-            label="Schema"
+          <StorageSchemaSelect
+            storageType={storageType}
+            catalog={targetCatalog}
             value={targetSchema}
-            onChange={(e) => setTargetSchema(e.target.value)}
-            size="small"
+            onChange={setTargetSchema}
+            helperText={
+              storageType === 'lakebase'
+                ? undefined
+                : `Default for new forms: ${defaultSchema || '…'}`
+            }
           />
           <TextField
             label="Table"
@@ -220,6 +263,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
   const [importRowsAfterPublish, setImportRowsAfterPublish] = useState(false);
   const [selectedColumnKeys, setSelectedColumnKeys] = useState<Set<string>>(new Set());
   const [recordKeyColumn, setRecordKeyColumn] = useState('');
+  const [duplicateKeyMode, setDuplicateKeyMode] = useState<DuplicateKeyMode>('retain');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -262,6 +306,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     setImportRowsAfterPublish(false);
     setSelectedColumnKeys(new Set());
     setRecordKeyColumn('');
+    setDuplicateKeyMode('retain');
     setError(null);
   };
 
@@ -291,7 +336,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     setTargetTable(preview.table);
   };
 
-  const analyzeCsv = async (csv: string, row: number) => {
+  const analyzeCsv = async (csv: string, row: number, options?: { selectAll?: boolean }) => {
     setCsvPreviewLoading(true);
     setError(null);
     try {
@@ -299,14 +344,21 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
       setCsvPreview(preview);
       setCsvColumns(preview.columns);
       const availableKeys = preview.columns.map((col) => col.field_key);
-      setSelectedColumnKeys((prev) => {
-        const available = new Set(availableKeys);
-        const preserved = new Set([...prev].filter((key) => available.has(key)));
-        if (preview.suggested_record_key) {
-          preserved.add(preview.suggested_record_key);
-        }
-        return preserved.size > 0 ? preserved : new Set(availableKeys);
-      });
+      if (options?.selectAll) {
+        setSelectedColumnKeys(new Set(availableKeys));
+      } else {
+        setSelectedColumnKeys((prev) => {
+          if (prev.size === 0) {
+            return new Set(availableKeys);
+          }
+          const available = new Set(availableKeys);
+          const preserved = new Set([...prev].filter((key) => available.has(key)));
+          if (preview.suggested_record_key) {
+            preserved.add(preview.suggested_record_key);
+          }
+          return preserved.size > 0 ? preserved : new Set(availableKeys);
+        });
+      }
       setRecordKeyColumn(preview.suggested_record_key);
       lastAnalyzedHeaderRowRef.current = row;
     } catch (err) {
@@ -327,7 +379,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
         const baseName = file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim();
         if (baseName) setName(baseName);
       }
-      await analyzeCsv(csv, headerRow);
+      await analyzeCsv(csv, headerRow, { selectAll: true });
     } catch (err) {
       setCsvPreview(null);
       setCsvColumns([]);
@@ -419,6 +471,10 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
         record_key_column:
           creationMode === 'existing_uc_table' || creationMode === 'import_csv'
             ? recordKeyColumn
+            : undefined,
+        duplicate_key_mode:
+          creationMode === 'existing_uc_table' || creationMode === 'import_csv'
+            ? duplicateKeyMode
             : undefined,
         target_catalog:
           creationMode === 'existing_uc_table'
@@ -594,6 +650,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                     />
                   ))}
                 </Box>
+                <DuplicateKeyModeField value={duplicateKeyMode} onChange={setDuplicateKeyMode} />
               </Box>
             )}
           </Box>
@@ -679,7 +736,8 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                     Unique business key used to identify rows when editing existing data.
                   </FormHelperText>
                 </FormControl>
-                <Typography variant="subtitle2" gutterBottom>
+                <DuplicateKeyModeField value={duplicateKeyMode} onChange={setDuplicateKeyMode} />
+                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
                   Form columns
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
