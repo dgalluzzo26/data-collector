@@ -773,10 +773,8 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         lookup_allowed = build_lookup_allowed(fields, project_id)
-        created = 0
-        updated = 0
-        skipped = 0
         failed: list[ImportRecordError] = []
+        valid_rows: list[tuple[int, dict[str, Any]]] = []
         record_key_col = project.get("record_key_column")
         for row_num, values in enumerate(parsed, start=body.header_row + 1):
             errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
@@ -784,29 +782,14 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
                 failed.append(ImportRecordError(row=row_num, field_errors=errors))
                 continue
             try:
-                action, row, previous_values = repository.import_record_row(
-                    project, fields, values, user
-                )
+                repository._resolve_new_record_id(project, values)
             except ValueError as exc:
                 field_key = record_key_col or "_import"
                 failed.append(ImportRecordError(row=row_num, field_errors={field_key: str(exc)}))
                 continue
-            if action == "skipped":
-                skipped += 1
-                continue
-            if action == "updated" and row:
-                updated += 1
-                audit_repository.log_record_updated(
-                    project_id,
-                    row["record_id"],
-                    previous_values or {},
-                    values,
-                    changed_by=user,
-                )
-                continue
-            if action == "created" and row:
-                created += 1
-                audit_repository.log_record_created(
-                    project_id, row["record_id"], values, changed_by=user
-                )
+            valid_rows.append((row_num, values))
+
+        created, updated, skipped = repository.bulk_import_records(
+            project, fields, valid_rows, user
+        )
     return ImportRecordsResult(created=created, updated=updated, skipped=skipped, failed=failed)

@@ -156,6 +156,42 @@ def upsert_staged(
     )
 
 
+def insert_staged_batch(
+    project_id: str,
+    entries: list[tuple[str, dict[str, Any]]],
+    user_email: str,
+) -> None:
+    """Insert new staged rows without per-row existence checks (bulk CSV import)."""
+    if not entries:
+        return
+    now = _now()
+    value_groups: list[str] = []
+    params: list[Any] = []
+    for record_id, values in entries:
+        value_groups.append("(?, ?, ?, ?, ?, ?, ?, ?)")
+        params.extend(
+            (
+                project_id,
+                record_id,
+                "insert",
+                json.dumps(values),
+                now,
+                user_email,
+                now,
+                user_email,
+            )
+        )
+    execute(
+        f"""
+        INSERT INTO {_table("staged_record_changes")} (
+            project_id, record_id, operation, values_json,
+            staged_at, staged_by, updated_at, updated_by
+        ) VALUES {", ".join(value_groups)}
+        """,
+        params,
+    )
+
+
 def record_id_exists_in_staging(project_id: str, record_id: str) -> bool:
     row = get_staged(project_id, record_id)
     return row is not None and row.get("operation") != "delete"

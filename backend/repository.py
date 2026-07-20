@@ -1265,6 +1265,272 @@ def sync_staged_records(
     return {"synced": synced, "inserted": inserted, "updated": updated, "deleted": deleted}
 
 
+_IMPORT_BATCH_SIZE = 50
+
+
+def _load_uc_record_ids(project: dict[str, Any]) -> set[str]:
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    if record_key_col:
+        col = _quote_col(record_key_col)
+        rows = data_fetchall(
+            f"SELECT CAST({col} AS STRING) AS rid FROM {data_table} WHERE {col} IS NOT NULL"
+        )
+    else:
+        rows = data_fetchall(
+            f"SELECT CAST({_quote_col('_record_id')} AS STRING) AS rid FROM {data_table}"
+        )
+    return {str(row["rid"]) for row in rows if row.get("rid") is not None}
+
+
+def _insert_records_batch_to_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    batch: list[tuple[str, dict[str, Any]]],
+    user_email: str,
+) -> list[dict[str, Any]]:
+    if not batch:
+        return []
+
+    data_table = _data_table_fqn(project)
+    record_key_col = _record_key_column(project)
+    existing_cols = _describe_column_names(data_table)
+    now = _now()
+
+    cols: list[str] = []
+    include_record_id = not record_key_col and _table_has_column(existing_cols, "_record_id")
+    if include_record_id:
+        cols.append(_quote_col("_record_id"))
+    if _table_has_column(existing_cols, "_created_at"):
+        cols.append(_quote_col("_created_at"))
+    if _table_has_column(existing_cols, "_created_by"):
+        cols.append(_quote_col("_created_by"))
+    if _table_has_column(existing_cols, "_updated_at"):
+        cols.append(_quote_col("_updated_at"))
+    if _table_has_column(existing_cols, "_updated_by"):
+        cols.append(_quote_col("_updated_by"))
+
+    field_cols: list[str] = []
+    for field in fields:
+        if _table_has_column(existing_cols, field.field_key):
+            field_cols.append(_quote_col(field.field_key))
+    cols.extend(field_cols)
+
+    value_groups: list[str] = []
+    params: list[Any] = []
+    created_rows: list[dict[str, Any]] = []
+    for record_id, values in batch:
+        row_params: list[Any] = []
+        if include_record_id:
+            row_params.append(record_id)
+        if _table_has_column(existing_cols, "_created_at"):
+            row_params.append(now)
+        if _table_has_column(existing_cols, "_created_by"):
+            row_params.append(user_email)
+        if _table_has_column(existing_cols, "_updated_at"):
+            row_params.append(now)
+        if _table_has_column(existing_cols, "_updated_by"):
+            row_params.append(user_email)
+        for field in fields:
+            if not _table_has_column(existing_cols, field.field_key):
+                continue
+            val = coerce_value_for_storage(field, values.get(field.field_key))
+            if isinstance(val, (list, dict)):
+                row_params.append(json.dumps(val))
+            else:
+                row_params.append(val)
+        value_groups.append(f"({', '.join('?' for _ in cols)})")
+        params.extend(row_params)
+        created_rows.append(
+            {
+                "record_id": record_id,
+                "values": values,
+                "created_at": now,
+                "created_by": user_email,
+                "updated_at": now,
+                "updated_by": user_email,
+            }
+        )
+
+    col_sql = ", ".join(cols)
+    sql = f"INSERT INTO {data_table} ({col_sql}) VALUES {', '.join(value_groups)}"
+    data_execute(sql, params)
+    return created_rows
+
+
+def _staged_row_is_active(staged_row: dict[str, Any] | None) -> bool:
+    return staged_row is not None and staged_row.get("operation") != "delete"
+
+
+def _apply_staged_import_creates(
+    project: dict[str, Any],
+    creates: list[tuple[str, dict[str, Any]]],
+    user_email: str,
+    staged_by_id: dict[str, dict[str, Any]],
+) -> list[tuple[str, dict[str, Any]]]:
+    from backend import staged_records
+
+    project_id = project["project_id"]
+    now = _now()
+    for i in range(0, len(creates), _IMPORT_BATCH_SIZE):
+        batch = creates[i : i + _IMPORT_BATCH_SIZE]
+        staged_records.insert_staged_batch(project_id, batch, user_email)
+        for record_id, values in batch:
+            staged_by_id[record_id] = {
+                "record_id": record_id,
+                "operation": "insert",
+                "values_json": json.dumps(values),
+                "staged_at": now,
+                "staged_by": user_email,
+                "updated_at": now,
+                "updated_by": user_email,
+            }
+    return list(creates)
+
+
+def _apply_staged_import_updates(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    updates: list[tuple[str, dict[str, Any]]],
+    user_email: str,
+    staged_by_id: dict[str, dict[str, Any]],
+    uc_ids: set[str],
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    from backend import staged_records
+
+    project_id = project["project_id"]
+    audit_updates: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for record_id, values in updates:
+        staged_row = staged_by_id.get(record_id)
+        if staged_row and staged_row["operation"] == "delete":
+            staged_records.upsert_staged(project_id, record_id, "insert", values, user_email)
+            audit_updates.append((record_id, {}, values))
+            continue
+        if staged_row:
+            existing_values = json.loads(staged_row.get("values_json") or "{}")
+            merged_values = {**existing_values, **values}
+            operation = "insert" if staged_row["operation"] == "insert" else "update"
+            staged_records.upsert_staged(
+                project_id, record_id, operation, merged_values, user_email
+            )
+            audit_updates.append((record_id, existing_values, merged_values))
+            continue
+        if record_id in uc_ids:
+            existing = _get_record_from_uc(project, fields, record_id)
+            merged_values = {**(existing["values"] if existing else {}), **values}
+            staged_records.upsert_staged(
+                project_id, record_id, "update", merged_values, user_email
+            )
+            audit_updates.append(
+                (record_id, existing["values"] if existing else {}, merged_values)
+            )
+    return audit_updates
+
+
+def bulk_import_records(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    rows: list[tuple[int, dict[str, Any]]],
+    user_email: str,
+) -> tuple[int, int, int]:
+    """Import validated CSV rows with batched UC inserts and fewer round trips."""
+    if _is_lakebase(project):
+        created = updated = skipped = 0
+        for _row_num, values in rows:
+            action, _row, _previous = import_record_row(project, fields, values, user_email)
+            if action == "skipped":
+                skipped += 1
+            elif action == "updated":
+                updated += 1
+            else:
+                created += 1
+        return created, updated, skipped
+
+    project_id = project["project_id"]
+    record_key_col = _record_key_column(project)
+    dup_mode = _duplicate_key_mode(project)
+    uses_staged = _uses_staged_sync(project)
+
+    with project_data_scope(project):
+        uc_ids = _load_uc_record_ids(project) if record_key_col else set()
+        staged_by_id: dict[str, dict[str, Any]] = {}
+        if uses_staged:
+            from backend import staged_records
+
+            staged_by_id = {
+                row["record_id"]: row for row in staged_records.list_staged(project_id)
+            }
+
+        creates: list[tuple[str, dict[str, Any]]] = []
+        updates: list[tuple[str, dict[str, Any]]] = []
+        skipped = 0
+        seen_ids: set[str] = set(uc_ids)
+
+        for _row_num, values in rows:
+            record_id = _resolve_new_record_id(project, values)
+            in_staged = _staged_row_is_active(staged_by_id.get(record_id))
+            taken = record_id in seen_ids or in_staged
+
+            if record_key_col and taken:
+                if dup_mode == "retain":
+                    skipped += 1
+                    continue
+                updates.append((record_id, values))
+                seen_ids.add(record_id)
+                continue
+
+            creates.append((record_id, values))
+            seen_ids.add(record_id)
+
+        created = 0
+        updated = 0
+        if uses_staged:
+            create_audit = _apply_staged_import_creates(
+                project, creates, user_email, staged_by_id
+            )
+            update_audit = _apply_staged_import_updates(
+                project, fields, updates, user_email, staged_by_id, uc_ids
+            )
+            created = len(create_audit)
+            updated = len(update_audit)
+            from backend import audit_repository
+
+            audit_repository.log_records_created_batch(
+                project_id, create_audit, changed_by=user_email
+            )
+            audit_repository.log_records_updated_batch(
+                project_id, update_audit, changed_by=user_email
+            )
+            return created, updated, skipped
+
+        create_audit: list[tuple[str, dict[str, Any]]] = []
+        for i in range(0, len(creates), _IMPORT_BATCH_SIZE):
+            batch = creates[i : i + _IMPORT_BATCH_SIZE]
+            inserted = _insert_records_batch_to_uc(project, fields, batch, user_email)
+            create_audit.extend((row["record_id"], row["values"]) for row in inserted)
+        created = len(create_audit)
+
+        update_audit: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        for record_id, values in updates:
+            existing = get_record(project, fields, record_id)
+            row = _overwrite_existing_record(project, fields, record_id, values, user_email)
+            update_audit.append(
+                (record_id, existing["values"] if existing else {}, row["values"])
+            )
+        updated = len(update_audit)
+
+        from backend import audit_repository
+
+        audit_repository.log_records_created_batch(
+            project_id, create_audit, changed_by=user_email
+        )
+        audit_repository.log_records_updated_batch(
+            project_id, update_audit, changed_by=user_email
+        )
+
+    return created, updated, skipped
+
+
 def import_record_row(
     project: dict[str, Any],
     fields: list[FieldDefinition],

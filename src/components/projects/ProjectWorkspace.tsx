@@ -141,7 +141,11 @@ export default function ProjectWorkspace() {
   if (error || !project) return <Typography color="error">{error || 'Project not found'}</Typography>;
 
   const showGenieTabForProject = showGenieTab(project);
-  const setTab = (value: TabKey) => setSearchParams({ tab: value });
+  const setTab = (value: TabKey) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', value);
+    setSearchParams(next);
+  };
 
   const saveDesign = async () => {
     setSaving(true);
@@ -174,7 +178,6 @@ export default function ProjectWorkspace() {
     }
     setPublishing(true);
     setMessage(null);
-    const shouldImportCsv = searchParams.get('importCsv') === '1';
     const stagedImport = projectId ? getStagedCsvImport(projectId) : null;
     try {
       if (designerFields.length > 0) {
@@ -189,7 +192,7 @@ export default function ProjectWorkspace() {
       let publishText = `Published to ${storageLabel}.`;
       let publishSeverity: WorkspaceMessage['severity'] = 'success';
 
-      if (shouldImportCsv && stagedImport && projectId) {
+      if (stagedImport && projectId) {
         const fieldsForLabels =
           designerFields.length > 0 ? designerFields : selectPublishedFields(project);
         const fieldLabels = Object.fromEntries(
@@ -204,6 +207,9 @@ export default function ProjectWorkspace() {
           clearStagedCsvImport(projectId);
           const nextParams = new URLSearchParams(searchParams);
           nextParams.delete('importCsv');
+          if (nextParams.get('tab') !== 'records') {
+            nextParams.set('tab', 'records');
+          }
           setSearchParams(nextParams);
           if (result.failed.length > 0) {
             publishText = `Published to ${storageLabel}.\n${formatImportResult(result, fieldLabels)}`;
@@ -310,6 +316,12 @@ export default function ProjectWorkspace() {
       </Tabs>
 
       {message && <WorkspaceMessageBanner message={message} />}
+
+      {project.status === 'draft' && projectId && getStagedCsvImport(projectId) && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          CSV rows are queued and will import automatically when you publish.
+        </Alert>
+      )}
 
       {tab === 'designer' && (
         <Box>
