@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -120,9 +121,15 @@ export default function CollectionsView() {
             {projects.map((project) => (
               <TableRow key={project.project_id} hover>
                 <TableCell>
-                  <RouterLink to={`/collections/${project.project_id}`} style={{ fontWeight: 600 }}>
-                    {project.name}
-                  </RouterLink>
+                  <Badge
+                    color="warning"
+                    badgeContent={project.pending_change_request_count || 0}
+                    invisible={project.role !== 'admin' || !(project.pending_change_request_count || 0)}
+                  >
+                    <RouterLink to={`/collections/${project.project_id}`} style={{ fontWeight: 600 }}>
+                      {project.name}
+                    </RouterLink>
+                  </Badge>
                   {project.description && (
                     <Typography variant="caption" display="block" color="text.secondary">
                       {project.description}

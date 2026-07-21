@@ -49,8 +49,16 @@ TABLES = {
         schema_version INT NOT NULL,
         is_published BOOLEAN NOT NULL""",
     "form_layouts": """
+        request_id STRING NOT NULL,
         project_id STRING NOT NULL,
-        layout_json STRING,
+        status STRING NOT NULL,
+        layout_json STRING NOT NULL,
+        message STRING,
+        requested_by STRING NOT NULL,
+        requested_at TIMESTAMP NOT NULL,
+        reviewed_by STRING,
+        reviewed_at TIMESTAMP,
+        review_note STRING,
         schema_version INT NOT NULL,
         updated_at TIMESTAMP NOT NULL,
         updated_by STRING NOT NULL""",
@@ -122,6 +130,7 @@ def migration_statements(catalog: str, schema: str) -> list[str]:
     """ALTER statements for existing deployments (idempotent re-run may fail if columns exist)."""
     lt = _table_fqn(catalog, schema, "lookup_tables")
     proj = _table_fqn(catalog, schema, "projects")
+    fl = _table_fqn(catalog, schema, "form_layouts")
     return [
         f"ALTER TABLE {lt} ADD COLUMN source_catalog STRING",
         f"ALTER TABLE {lt} ADD COLUMN source_schema STRING",
@@ -137,6 +146,14 @@ def migration_statements(catalog: str, schema: str) -> list[str]:
         f"ALTER TABLE {proj} ADD COLUMN record_key_column STRING",
         f"ALTER TABLE {proj} ADD COLUMN record_sync_mode STRING",
         f"ALTER TABLE {proj} ADD COLUMN duplicate_key_mode STRING",
+        f"ALTER TABLE {fl} ADD COLUMN request_id STRING",
+        f"ALTER TABLE {fl} ADD COLUMN status STRING",
+        f"ALTER TABLE {fl} ADD COLUMN message STRING",
+        f"ALTER TABLE {fl} ADD COLUMN requested_by STRING",
+        f"ALTER TABLE {fl} ADD COLUMN requested_at TIMESTAMP",
+        f"ALTER TABLE {fl} ADD COLUMN reviewed_by STRING",
+        f"ALTER TABLE {fl} ADD COLUMN reviewed_at TIMESTAMP",
+        f"ALTER TABLE {fl} ADD COLUMN review_note STRING",
     ]
 
 

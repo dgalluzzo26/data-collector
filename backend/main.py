@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.routes import ai, branding, genie, health, lookups, me, projects, table_requests, uc
+from backend.routes import ai, branding, change_requests, genie, health, lookups, me, projects, table_requests, uc
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +58,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(branding.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(change_requests.router, prefix="/api")
 app.include_router(lookups.router, prefix="/api")
 app.include_router(genie.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")

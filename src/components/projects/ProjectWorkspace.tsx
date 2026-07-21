@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Alert from '@mui/material/Alert';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Breadcrumbs from '@mui/material/Breadcrumbs';
 import Button from '@mui/material/Button';
@@ -19,6 +20,7 @@ import { showGenieTab } from '../../lib/genie';
 import type { FieldDefinition } from '../../types';
 import BusyButton from '../common/BusyButton';
 import FormDesigner from './FormDesigner';
+import FormChangeRequestsPanel from './FormChangeRequestsPanel';
 import AiAssistantPanel from './AiAssistantPanel';
 import LookupsPanel from './LookupsPanel';
 import MembersPanel from './MembersPanel';
@@ -115,7 +117,9 @@ export default function ProjectWorkspace() {
   const [message, setMessage] = useState<WorkspaceMessage | null>(null);
 
   const isAdmin = project?.role === 'admin';
-  const canEdit = project?.role === 'admin' || project?.role === 'editor';
+  const isEditor = project?.role === 'editor';
+  const canEdit = isAdmin || isEditor;
+  const canDesign = isAdmin || isEditor;
 
   const designerFields = useMemo(() => {
     if (!project) return [];
@@ -272,7 +276,13 @@ export default function ProjectWorkspace() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
         <Box>
           <Typography variant="h4" className="page-title" gutterBottom>
-            {project.name}
+            <Badge
+              color="warning"
+              badgeContent={project.pending_change_request_count || 0}
+              invisible={!isAdmin || !(project.pending_change_request_count || 0)}
+            >
+              <Box component="span">{project.name}</Box>
+            </Badge>
           </Typography>
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
             <Chip size="small" label={project.status} />
@@ -330,6 +340,11 @@ export default function ProjectWorkspace() {
               Showing the published form. Edits are saved as a draft — click Publish when ready.
             </Alert>
           )}
+          {isEditor && !isAdmin && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              You can edit fields and submit a change request for admin review. Direct save and publish require admin access.
+            </Alert>
+          )}
           {isAdmin && (
             <AiAssistantPanel
               project={project}
@@ -341,11 +356,20 @@ export default function ProjectWorkspace() {
               }}
             />
           )}
+          {(isAdmin || isEditor) && (
+            <FormChangeRequestsPanel
+              project={project}
+              proposedFields={designerFields}
+              isAdmin={!!isAdmin}
+              isEditor={!!isEditor}
+              onChanged={refresh}
+            />
+          )}
           <FormDesigner
             fields={designerFields}
             lookups={project.lookups || []}
             onChange={setDraftFields}
-            readOnly={!isAdmin}
+            readOnly={!canDesign}
           />
         </Box>
       )}

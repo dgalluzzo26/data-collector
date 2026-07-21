@@ -66,6 +66,7 @@ class ProjectSummary(BaseModel):
     status: ProjectStatus
     schema_version: int
     role: Optional[ProjectRole] = None
+    pending_change_request_count: int = 0
     created_at: datetime
     created_by: str
     updated_at: Optional[datetime] = None
@@ -80,6 +81,7 @@ class ProjectDetail(ProjectSummary):
     record_sync_mode: Optional[RecordSyncMode] = None
     duplicate_key_mode: DuplicateKeyMode = "retain"
     staged_change_count: int = 0
+    pending_change_request_count: int = 0
     sync_catalog: Optional[str] = None
     sync_schema: Optional[str] = None
     sync_table: Optional[str] = None
@@ -166,6 +168,40 @@ class AddMemberResponse(BaseModel):
 
 class SaveFieldsRequest(BaseModel):
     fields: list[FieldDefinition]
+
+
+FormLayoutStatus = Literal["draft", "pending", "published", "rejected"]
+
+
+class FormChangeRequest(BaseModel):
+    request_id: str
+    project_id: str
+    status: FormLayoutStatus
+    message: Optional[str] = None
+    proposed_fields: list[FieldDefinition]
+    requested_by: str
+    requested_at: datetime
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    schema_version: int
+    updated_at: datetime
+    updated_by: str
+
+
+class CreateChangeRequestBody(BaseModel):
+    fields: list[FieldDefinition]
+    message: Optional[str] = Field(default=None, max_length=4000)
+
+
+class ReviewChangeRequestBody(BaseModel):
+    review_note: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ApproveChangeRequestResponse(BaseModel):
+    request: FormChangeRequest
+    fields: list[FieldDefinition]
+    schema_version: int
 
 
 class TableConstructionRequestBody(BaseModel):

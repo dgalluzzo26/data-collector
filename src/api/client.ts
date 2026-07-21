@@ -7,6 +7,8 @@ import type {
   BindLookupPayload,
   CreateProjectPayload,
   CsvFormPreview,
+  ApproveChangeRequestResult,
+  FormChangeRequest,
   FieldDefinition,
   GenieAskResponse,
   GenieStatus,
@@ -262,6 +264,39 @@ export const api = {
     request<FieldDefinition[]>(`/projects/${id}/fields?published_only=true`, undefined, 'Loading fields…'),
   publishProject: (id: string) =>
     request<ProjectDetail>(`/projects/${id}/publish`, { method: 'POST' }, 'Publishing…', 120_000),
+
+  listChangeRequests: (id: string, status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return request<FormChangeRequest[]>(
+      `/projects/${id}/change-requests${qs}`,
+      undefined,
+      'Loading change requests…',
+    );
+  },
+  createChangeRequest: (id: string, fields: FieldDefinition[], message?: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests`,
+      { method: 'POST', body: JSON.stringify({ fields, message }) },
+      'Submitting change request…',
+    ),
+  approveChangeRequest: (id: string, requestId: string, review_note?: string) =>
+    request<ApproveChangeRequestResult>(
+      `/projects/${id}/change-requests/${requestId}/approve`,
+      { method: 'POST', body: JSON.stringify({ review_note }) },
+      'Approving change request…',
+    ),
+  rejectChangeRequest: (id: string, requestId: string, review_note?: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests/${requestId}/reject`,
+      { method: 'POST', body: JSON.stringify({ review_note }) },
+      'Rejecting change request…',
+    ),
+  withdrawChangeRequest: (id: string, requestId: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests/${requestId}/withdraw`,
+      { method: 'POST' },
+      'Withdrawing change request…',
+    ),
 
   listRecords: (id: string, params?: { limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();

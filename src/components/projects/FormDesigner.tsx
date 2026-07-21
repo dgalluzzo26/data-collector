@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -34,6 +35,18 @@ function slugKey(label: string) {
     .slice(0, 40);
 }
 
+function designerRowKey(field: FieldDefinition, index: number): string {
+  return (field.config_json?._designer_id as string | undefined) ?? `row-${index}`;
+}
+
+function withDesignerId(field: FieldDefinition): FieldDefinition {
+  if (field.config_json?._designer_id) return field;
+  return {
+    ...field,
+    config_json: { ...field.config_json, _designer_id: crypto.randomUUID() },
+  };
+}
+
 interface FormDesignerProps {
   fields: FieldDefinition[];
   lookups: LookupTable[];
@@ -42,6 +55,12 @@ interface FormDesignerProps {
 }
 
 export default function FormDesigner({ fields, lookups, onChange, readOnly = false }: FormDesignerProps) {
+  useEffect(() => {
+    if (fields.some((field) => !field.config_json?._designer_id)) {
+      onChange(fields.map(withDesignerId));
+    }
+  }, [fields, onChange]);
+
   const sorted = [...fields].sort((a, b) => a.sort_order - b.sort_order);
 
   const updateField = (index: number, patch: Partial<FieldDefinition>) => {
@@ -61,7 +80,7 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
         is_required: false,
         schema_version: 0,
         is_published: false,
-        config_json: {},
+        config_json: { _designer_id: crypto.randomUUID() },
       },
     ]);
   };
@@ -97,7 +116,7 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {sorted.map((field, index) => (
-          <Paper key={`${field.field_key}-${index}`} className="page-card" sx={{ p: 2 }}>
+          <Paper key={designerRowKey(field, index)} className="page-card" sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
               <Box sx={{ flex: 1, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
                 <TextField
@@ -106,7 +125,12 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
                   disabled={readOnly}
                   onChange={(e) => {
                     const label = e.target.value;
-                    updateField(index, { label, field_key: slugKey(label) || field.field_key });
+                    const patch: Partial<FieldDefinition> = { label };
+                    const autoKey = slugKey(field.label);
+                    if (!field.field_key || field.field_key === autoKey) {
+                      patch.field_key = slugKey(label) || field.field_key;
+                    }
+                    updateField(index, patch);
                   }}
                 />
                 <TextField

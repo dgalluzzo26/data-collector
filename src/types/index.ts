@@ -123,6 +123,7 @@ export interface ProjectSummary {
   status: ProjectStatus;
   schema_version: number;
   role?: ProjectRole | null;
+  pending_change_request_count?: number;
   created_at: string;
   created_by: string;
   updated_at?: string | null;
@@ -137,6 +138,7 @@ export interface ProjectDetail extends ProjectSummary {
   record_sync_mode?: RecordSyncMode | null;
   duplicate_key_mode?: DuplicateKeyMode | null;
   staged_change_count?: number;
+  pending_change_request_count?: number;
   sync_catalog?: string | null;
   sync_schema?: string | null;
   sync_table?: string | null;
@@ -216,6 +218,30 @@ export interface SyncStagedRecordsResult {
   inserted: number;
   updated: number;
   deleted: number;
+}
+
+export type FormLayoutStatus = 'draft' | 'pending' | 'published' | 'rejected';
+
+export interface FormChangeRequest {
+  request_id: string;
+  project_id: string;
+  status: FormLayoutStatus;
+  message?: string | null;
+  proposed_fields: FieldDefinition[];
+  requested_by: string;
+  requested_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_note?: string | null;
+  schema_version: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface ApproveChangeRequestResult {
+  request: FormChangeRequest;
+  fields: FieldDefinition[];
+  schema_version: number;
 }
 
 export interface TableConstructionRequestPayload {
