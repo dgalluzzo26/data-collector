@@ -32,10 +32,17 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_branding() -> dict[str, Any]:
-    row = fetchone(
-        f"SELECT value_json FROM {_table()} WHERE setting_key = ?",
-        (_SETTING_KEY,),
-    )
+    try:
+        row = fetchone(
+            f"SELECT value_json FROM {_table()} WHERE setting_key = ?",
+            (_SETTING_KEY,),
+        )
+    except Exception as exc:
+        from backend.sql_errors import SqlPermissionError, is_table_not_found
+
+        if isinstance(exc, SqlPermissionError) or is_table_not_found(exc):
+            return json.loads(json.dumps(DEFAULT_BRANDING))
+        raise
     if not row or not row.get("value_json"):
         return json.loads(json.dumps(DEFAULT_BRANDING))
     try:

@@ -12,7 +12,7 @@ from typing import Any, Iterator, Optional
 from fastapi import Request
 
 from backend import auth
-from backend.db import get_connection
+from backend.db import get_connection, get_metadata_connection
 from backend.sql_errors import (
     UserAuthorizationRequiredError,
     as_permission_error,
@@ -160,7 +160,7 @@ def request_connections(request: Request | None = None) -> Iterator[None]:
 
     timer = get_timer()
     connect_started = time.perf_counter()
-    metadata_conn = get_connection(as_service_principal=True)
+    metadata_conn = get_metadata_connection()
     user_token = auth.resolve_data_access_token(request)
     token_present = bool(request is not None and auth.get_user_access_token(request))
     token_err = _user_data_connection_error.set(None)
@@ -199,7 +199,7 @@ def request_connection() -> Iterator[None]:
 
     timer = get_timer()
     connect_started = time.perf_counter()
-    conn = get_connection(as_service_principal=True)
+    conn = get_metadata_connection()
     if timer is not None:
         timer.add_phase("db_connect_ms", (time.perf_counter() - connect_started) * 1000)
 
@@ -229,7 +229,7 @@ def cursor(*, connection: ConnectionTarget = ConnectionTarget.METADATA) -> Itera
 
     timer = get_timer()
     connect_started = time.perf_counter()
-    with get_connection(as_service_principal=True) as conn:
+    with get_metadata_connection() as conn:
         if timer is not None:
             timer.add_phase("db_connect_ms", (time.perf_counter() - connect_started) * 1000)
         with conn.cursor() as cur:

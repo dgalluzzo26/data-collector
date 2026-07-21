@@ -3,6 +3,7 @@ export type ProjectStatus = 'draft' | 'published' | 'archived';
 export type StorageType = 'uc_delta' | 'lakebase';
 export type StorageMode = 'managed' | 'existing_uc';
 export type RecordSyncMode = 'immediate' | 'staged';
+export type DuplicateKeyMode = 'retain' | 'overwrite';
 export type FieldType =
   | 'text'
   | 'textarea'
@@ -122,6 +123,7 @@ export interface ProjectSummary {
   status: ProjectStatus;
   schema_version: number;
   role?: ProjectRole | null;
+  pending_change_request_count?: number;
   created_at: string;
   created_by: string;
   updated_at?: string | null;
@@ -134,7 +136,9 @@ export interface ProjectDetail extends ProjectSummary {
   storage_mode?: StorageMode;
   record_key_column?: string | null;
   record_sync_mode?: RecordSyncMode | null;
+  duplicate_key_mode?: DuplicateKeyMode | null;
   staged_change_count?: number;
+  pending_change_request_count?: number;
   sync_catalog?: string | null;
   sync_schema?: string | null;
   sync_table?: string | null;
@@ -188,7 +192,25 @@ export interface RecordAuditEntry {
 
 export interface ImportRecordsResult {
   created: number;
+  updated?: number;
+  skipped?: number;
   failed: Array<{ row: number; field_errors: Record<string, string> }>;
+}
+
+export interface RecordCsvColumnMapping {
+  field_key: string;
+  label: string;
+  csv_header?: string | null;
+  matched: boolean;
+  included: boolean;
+}
+
+export interface RecordCsvPreview {
+  columns: RecordCsvColumnMapping[];
+  unmatched_csv_headers: string[];
+  sample_rows: Record<string, unknown>[];
+  row_count: number;
+  header_row: number;
 }
 
 export interface SyncStagedRecordsResult {
@@ -198,6 +220,44 @@ export interface SyncStagedRecordsResult {
   deleted: number;
 }
 
+export type FormLayoutStatus = 'draft' | 'pending' | 'published' | 'rejected';
+
+export interface FormChangeRequest {
+  request_id: string;
+  project_id: string;
+  status: FormLayoutStatus;
+  message?: string | null;
+  proposed_fields: FieldDefinition[];
+  requested_by: string;
+  requested_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_note?: string | null;
+  schema_version: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface ApproveChangeRequestResult {
+  request: FormChangeRequest;
+  fields: FieldDefinition[];
+  schema_version: number;
+}
+
+export interface TableConstructionRequestPayload {
+  table_name: string;
+  catalog?: string;
+  schema_name?: string;
+  description?: string;
+}
+
+export interface TableConstructionRequestResult {
+  sent: boolean;
+  recipients: string[];
+  mailto_url?: string | null;
+  message: string;
+}
+
 export interface CreateProjectPayload {
   name: string;
   description?: string;
@@ -205,6 +265,7 @@ export interface CreateProjectPayload {
   storage_mode?: StorageMode;
   record_key_column?: string;
   record_sync_mode?: RecordSyncMode;
+  duplicate_key_mode?: DuplicateKeyMode;
   target_catalog?: string;
   target_schema?: string;
   target_table?: string;
@@ -264,6 +325,24 @@ export interface UcTablePreview {
   columns: LookupColumn[];
   row_count: number;
   sample_rows: Record<string, unknown>[];
+}
+
+export interface InferredColumn {
+  field_key: string;
+  label: string;
+  field_type: FieldType;
+  config_json?: Record<string, unknown> | null;
+  sort_order: number;
+  is_required: boolean;
+  included: boolean;
+}
+
+export interface CsvFormPreview {
+  columns: InferredColumn[];
+  sample_rows: Record<string, unknown>[];
+  row_count: number;
+  suggested_record_key: string;
+  header_row: number;
 }
 
 export interface BindLookupPayload {

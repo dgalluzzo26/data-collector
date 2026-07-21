@@ -47,7 +47,7 @@ def require_role(project_id: str, request: Request, minimum: ProjectRole) -> tup
 
 
 def project_to_summary(row: dict, role: ProjectRole | None = None) -> dict:
-    return {
+    summary = {
         "project_id": row["project_id"],
         "name": row["name"],
         "slug": row["slug"],
@@ -60,6 +60,15 @@ def project_to_summary(row: dict, role: ProjectRole | None = None) -> dict:
         "created_by": row["created_by"],
         "updated_at": row.get("updated_at"),
     }
+    if summary["role"] == "admin":
+        from backend import change_request_service
+
+        summary["pending_change_request_count"] = change_request_service.count_pending(
+            row["project_id"]
+        )
+    else:
+        summary["pending_change_request_count"] = 0
+    return summary
 
 
 def require_app_admin(request: Request) -> str:

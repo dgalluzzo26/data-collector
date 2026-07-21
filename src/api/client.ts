@@ -6,6 +6,9 @@ import type {
   AppBranding,
   BindLookupPayload,
   CreateProjectPayload,
+  CsvFormPreview,
+  ApproveChangeRequestResult,
+  FormChangeRequest,
   FieldDefinition,
   GenieAskResponse,
   GenieStatus,
@@ -20,13 +23,21 @@ import type {
   RecordAuditEntry,
   RecordRow,
   ImportRecordsResult,
+  RecordCsvPreview,
   SyncStagedRecordsResult,
+  TableConstructionRequestPayload,
+  TableConstructionRequestResult,
   UcTablePreview,
   UserInfo,
   WorkspaceUser,
 } from '../types';
 
 const BASE = '/api';
+
+/** Preview/infer endpoints parse the full CSV payload. */
+const CSV_PREVIEW_TIMEOUT_MS = 120_000;
+/** Record/lookup imports may insert thousands of rows server-side. */
+const CSV_IMPORT_TIMEOUT_MS = 600_000;
 
 export class ApiValidationError extends Error {
   fieldErrors: Record<string, string>;
@@ -72,9 +83,29 @@ type ApiErrorDetail =
 
 function parseApiError(status: number, text: string): Error {
   try {
-    const json = JSON.parse(text) as { detail?: ApiErrorDetail };
+    const json = JSON.parse(text) as { detail?: ApiErrorDetail | Array<{ msg?: string; loc?: unknown[] }> };
     const detail = json.detail;
-    if (detail && typeof detail === 'object') {
+    if (Array.isArray(detail)) {
+      const csvTooLong = detail.find(
+        (item) =>
+          item.loc &&
+          Array.isArray(item.loc) &&
+          item.loc.includes('csv') &&
+          String(item.msg || '').includes('at most'),
+      );
+      if (csvTooLong) {
+        return new Error(
+          'CSV file is too large for upload. Try a smaller file, or create the form first and import records from the Records tab.',
+        );
+      }
+      const messages = detail
+        .map((item) => item.msg)
+        .filter((msg): msg is string => Boolean(msg));
+      if (messages.length) {
+        return new Error(messages.join(' '));
+      }
+    }
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
       if (detail.field_errors) {
         return new ApiValidationError(detail.field_errors);
       }
@@ -182,6 +213,13 @@ export const api = {
     ),
 
   listProjects: () => request<ProjectSummary[]>('/projects', undefined, 'Loading forms…'),
+  previewCsv: (csv: string, headerRow = 1) =>
+    request<CsvFormPreview>(
+      '/projects/preview-csv',
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+      CSV_PREVIEW_TIMEOUT_MS,
+    ),
   createProject: (body: CreateProjectPayload) =>
     request<ProjectDetail>(
       '/projects',
@@ -226,6 +264,39 @@ export const api = {
     request<FieldDefinition[]>(`/projects/${id}/fields?published_only=true`, undefined, 'Loading fields…'),
   publishProject: (id: string) =>
     request<ProjectDetail>(`/projects/${id}/publish`, { method: 'POST' }, 'Publishing…', 120_000),
+
+  listChangeRequests: (id: string, status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return request<FormChangeRequest[]>(
+      `/projects/${id}/change-requests${qs}`,
+      undefined,
+      'Loading change requests…',
+    );
+  },
+  createChangeRequest: (id: string, fields: FieldDefinition[], message?: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests`,
+      { method: 'POST', body: JSON.stringify({ fields, message }) },
+      'Submitting change request…',
+    ),
+  approveChangeRequest: (id: string, requestId: string, review_note?: string) =>
+    request<ApproveChangeRequestResult>(
+      `/projects/${id}/change-requests/${requestId}/approve`,
+      { method: 'POST', body: JSON.stringify({ review_note }) },
+      'Approving change request…',
+    ),
+  rejectChangeRequest: (id: string, requestId: string, review_note?: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests/${requestId}/reject`,
+      { method: 'POST', body: JSON.stringify({ review_note }) },
+      'Rejecting change request…',
+    ),
+  withdrawChangeRequest: (id: string, requestId: string) =>
+    request<FormChangeRequest>(
+      `/projects/${id}/change-requests/${requestId}/withdraw`,
+      { method: 'POST' },
+      'Withdrawing change request…',
+    ),
 
   listRecords: (id: string, params?: { limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
@@ -286,11 +357,26 @@ export const api = {
       endBusy();
     }
   },
-  importRecordsCsv: (id: string, csv: string) =>
+  previewRecordsCsv: (id: string, csv: string, headerRow = 1) =>
+    request<RecordCsvPreview>(
+      `/projects/${id}/records/preview-csv`,
+      { method: 'POST', body: JSON.stringify({ csv, header_row: headerRow }) },
+      'Analyzing CSV…',
+      CSV_PREVIEW_TIMEOUT_MS,
+    ),
+  importRecordsCsv: (id: string, csv: string, headerRow = 1, fieldKeys?: string[]) =>
     request<ImportRecordsResult>(
       `/projects/${id}/records/import`,
-      { method: 'POST', body: JSON.stringify({ csv }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          csv,
+          header_row: headerRow,
+          ...(fieldKeys ? { field_keys: fieldKeys } : {}),
+        }),
+      },
       'Importing records…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
 
   getGenieStatus: (projectId: string) =>
@@ -347,12 +433,14 @@ export const api = {
       `/projects/${projectId}/lookups/import`,
       { method: 'POST', body: JSON.stringify({ name, csv }) },
       'Importing lookup…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
   importLookupRowsCsv: (projectId: string, lookupId: string, csv: string) =>
     request<LookupRow[]>(
       `/projects/${projectId}/lookups/${lookupId}/import`,
       { method: 'POST', body: JSON.stringify({ csv }) },
       'Importing rows…',
+      CSV_IMPORT_TIMEOUT_MS,
     ),
   getLookupRows: (projectId: string, lookupId: string) =>
     request<LookupRow[]>(`/projects/${projectId}/lookups/${lookupId}/rows`, undefined, 'Loading lookup rows…'),
@@ -412,5 +500,12 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) },
       'Applying changes…',
       120_000,
+    ),
+
+  requestTableConstruction: (body: TableConstructionRequestPayload) =>
+    request<TableConstructionRequestResult>(
+      '/table-construction-requests',
+      { method: 'POST', body: JSON.stringify(body) },
+      'Sending table request…',
     ),
 };

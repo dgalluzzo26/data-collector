@@ -32,15 +32,6 @@ def resolve_warehouse_http_path(
     return config.warehouse_http_path()
 
 
-def _resolve_host(host: Optional[str] = None) -> str:
-    pat_host = host or os.environ.get("DATABRICKS_HOST")
-    if pat_host and "REPLACE_WITH" not in pat_host:
-        return _normalize_host(pat_host)
-    from databricks.sdk import WorkspaceClient
-
-    return _normalize_host(WorkspaceClient().config.host)
-
-
 def get_connection(
     *,
     host: Optional[str] = None,
@@ -98,3 +89,15 @@ def get_connection(
         http_path=http_path,
         credentials_provider=lambda: w.config.authenticate,
     )
+
+
+def is_databricks_app_runtime() -> bool:
+    """True when running as a deployed Databricks App (service principal available)."""
+    return bool(os.environ.get("DATABRICKS_CLIENT_ID"))
+
+
+def get_metadata_connection():
+    """Metadata SQL: app service principal in production, developer PAT locally."""
+    if is_databricks_app_runtime():
+        return get_connection(as_service_principal=True)
+    return get_connection(as_service_principal=False)
