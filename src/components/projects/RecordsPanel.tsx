@@ -13,7 +13,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import { api, ApiValidationError } from '../../api/client';
-import { useLookupOptions } from '../../hooks/useLookupOptions';
+import { useLookupOptions, useLookupRows } from '../../hooks/useLookupOptions';
 import { useInvalidateRecords, useRecords } from '../../hooks/useRecords';
 import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
 import { buildRecordGridColumns } from '../../lib/recordGridColumns';
@@ -85,6 +85,7 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
     publishedFields,
     project.lookups,
   );
+  const { data: lookupRowsById = {} } = useLookupRows(project.project_id, publishedFields);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<RecordRow | null>(null);
@@ -222,7 +223,7 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
   };
 
   const save = async () => {
-    const errors = validateRecordValues(publishedFields, formValues, lookupAllowed);
+    const errors = validateRecordValues(publishedFields, formValues, lookupAllowed, lookupRowsById);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
 

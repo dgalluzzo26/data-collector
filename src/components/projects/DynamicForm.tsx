@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
 import FormControl from '@mui/material/FormControl';
@@ -8,26 +8,14 @@ import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import TextField from '@mui/material/TextField';
-import { api } from '../../api/client';
+import { useLookupRows } from '../../hooks/useLookupOptions';
+import {
+  applyLookupFieldChange,
+  buildCascadeGroups,
+  getCascadeGroupForField,
+  optionsForField,
+} from '../../lib/lookupCascade';
 import type { FieldDefinition, LookupTable } from '../../types';
-
-export type LookupOptionMap = Record<string, { value: string; label: string }[]>;
-
-function resolveLookupColumns(
-  field: FieldDefinition,
-  lookup: LookupTable | undefined,
-): { valueCol: string; displayCol: string } {
-  const valueCol =
-    (field.config_json?.value_column as string) ||
-    lookup?.columns[0]?.key ||
-    'code';
-  const displayCol =
-    (field.config_json?.display_column as string) ||
-    lookup?.columns[1]?.key ||
-    lookup?.columns[0]?.key ||
-    'name';
-  return { valueCol, displayCol };
-}
 
 interface DynamicFormProps {
   projectId: string;
@@ -50,37 +38,8 @@ export default function DynamicForm({
   lockedFields,
   errors = {},
 }: DynamicFormProps) {
-  const [lookupOptions, setLookupOptions] = useState<LookupOptionMap>({});
-
-  const lookupFields = useMemo(
-    () => fields.filter((f) => f.field_type === 'lookup' && f.config_json?.lookup_id),
-    [fields],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const next: LookupOptionMap = {};
-      for (const field of lookupFields) {
-        const lookupId = field.config_json?.lookup_id as string;
-        const lookupMeta = lookups.find((l) => l.lookup_id === lookupId);
-        const { valueCol, displayCol } = resolveLookupColumns(field, lookupMeta);
-        try {
-          const rows = await api.getLookupRows(projectId, lookupId);
-          next[field.field_key] = rows.map((r) => ({
-            value: String(r.values[valueCol] ?? ''),
-            label: String(r.values[displayCol] ?? r.values[valueCol] ?? ''),
-          }));
-        } catch {
-          next[field.field_key] = [];
-        }
-      }
-      if (!cancelled) setLookupOptions(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, lookupFields, lookups]);
+  const { data: rowsByLookupId = {} } = useLookupRows(projectId, fields);
+  const cascadeGroups = useMemo(() => buildCascadeGroups(fields), [fields]);
 
   const sorted = useMemo(
     () => [...fields].sort((a, b) => a.sort_order - b.sort_order),
@@ -89,6 +48,10 @@ export default function DynamicForm({
 
   const setValue = (key: string, value: unknown) => {
     onChange({ ...values, [key]: value });
+  };
+
+  const setLookupValue = (field: FieldDefinition, value: unknown) => {
+    onChange(applyLookupFieldChange(field.field_key, value, fields, rowsByLookupId, lookups, values));
   };
 
   const isLocked = (fieldKey: string) => readOnly || Boolean(lockedFields?.has(fieldKey));
@@ -119,16 +82,25 @@ export default function DynamicForm({
         }
 
         if (field.field_type === 'lookup' || field.field_type === 'single_select') {
+          const lookupId = field.config_json?.lookup_id as string | undefined;
+          const lookupMeta = lookupId ? lookups.find((item) => item.lookup_id === lookupId) : undefined;
+          const cascadeGroup = getCascadeGroupForField(field.field_key, cascadeGroups);
           const selectOptions =
             field.field_type === 'lookup'
-              ? lookupOptions[field.field_key] || []
+              ? optionsForField(
+                  field,
+                  lookupId ? rowsByLookupId[lookupId] ?? [] : [],
+                  values,
+                  cascadeGroup,
+                  lookupMeta,
+                )
               : options.map((opt) => ({ value: opt, label: opt }));
           const emptyMessage =
             field.field_type === 'lookup'
-              ? !field.config_json?.lookup_id
+              ? !lookupId
                 ? 'No lookup table linked — fix in Form designer'
                 : selectOptions.length === 0
-                  ? 'Lookup table has no rows'
+                  ? 'No matching lookup values for the current filters'
                   : undefined
               : selectOptions.length === 0
                 ? 'No options configured — fix in Form designer'
@@ -140,7 +112,11 @@ export default function DynamicForm({
                 label={field.label}
                 value={(value as string) ?? ''}
                 disabled={isLocked(field.field_key)}
-                onChange={(e) => setValue(field.field_key, e.target.value)}
+                onChange={(e) =>
+                  field.field_type === 'lookup'
+                    ? setLookupValue(field, e.target.value)
+                    : setValue(field.field_key, e.target.value)
+                }
                 MenuProps={{ disablePortal: false }}
               >
                 {selectOptions.map((opt) => (
