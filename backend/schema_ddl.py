@@ -25,6 +25,7 @@ TABLES = {
         storage_mode STRING,
         record_key_column STRING,
         record_sync_mode STRING,
+        duplicate_key_mode STRING,
         schema_version INT NOT NULL,
         status STRING NOT NULL,
         created_at TIMESTAMP NOT NULL,
@@ -135,6 +136,7 @@ def migration_statements(catalog: str, schema: str) -> list[str]:
         f"ALTER TABLE {proj} ADD COLUMN storage_mode STRING",
         f"ALTER TABLE {proj} ADD COLUMN record_key_column STRING",
         f"ALTER TABLE {proj} ADD COLUMN record_sync_mode STRING",
+        f"ALTER TABLE {proj} ADD COLUMN duplicate_key_mode STRING",
     ]
 
 

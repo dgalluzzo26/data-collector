@@ -1,0 +1,7 @@
+# Allow-list for `databricks sync` to workspace (manual apps deploy).
+# Prebuild with `npm run build` first — do not sync package.json or node_modules.
+dist/**
+backend/**
+app.yaml
+requirements.txt
+pip.conf

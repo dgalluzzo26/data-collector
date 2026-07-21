@@ -10,7 +10,7 @@ env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse
   - name: DATABRICKS_CATALOG
-    value: classic_stable_kremer_catalog
+    value: serverless_stable_ipan_catalog 
   - name: DATABRICKS_SCHEMA
     value: data_collector
   # ENDPOINT_NAME resolved from the "database" app resource (re-attached on deploy — see docs/LAKEBASE.md).
@@ -23,7 +23,7 @@ env:
     value: "data-collector-dev"
   # Comma-separated emails with permission to edit app branding (logo, title, colors).
   - name: APP_ADMIN_EMAILS
-    value: "david.galluzzo@databricks.com"
+    value: "irene.pan@databricks.com"
   # hybrid | service_principal | user_obo — see README §3
   - name: UC_DATA_ACCESS_MODE
     value: "hybrid"
@@ -33,5 +33,5 @@ env:
 resources:
   - name: sql-warehouse
     sql_warehouse:
-      id: "62c50dd91fadb932"
+      id: "7474657382947207"
       permission: CAN_USE

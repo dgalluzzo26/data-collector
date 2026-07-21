@@ -1,7 +1,7 @@
-# Files excluded from `databricks sync` (Databricks Apps deploy).
-# The runtime only needs app.yaml + backend/ + requirements.txt + dist/.
-# We prebuild dist locally before sync, so JS sources / package.json
-# stay out so the server doesn't try to re-run npm install.
+# Files excluded from `databricks sync` when using --exclude-from .databricksignore.
+# Prefer scripts/sync_workspace.sh (uses workspace_sync_include.txt allow-list).
+# Bare `databricks sync . <dest>` uses .gitignore only and WILL upload package.json,
+# which makes Databricks Apps run npm install and often fail with ENOTEMPTY.
 
 node_modules/
 .DS_Store

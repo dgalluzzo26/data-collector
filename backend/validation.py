@@ -21,6 +21,38 @@ def _is_empty(value: Any) -> bool:
     return False
 
 
+def coerce_value_for_storage(field: FieldDefinition, value: Any) -> Any:
+    """Normalize record values before writing to typed SQL columns."""
+    if value is None:
+        return None
+    if isinstance(value, (list, dict)):
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            if field.field_type in ("number", "boolean", "date", "datetime"):
+                return None
+            return value
+        if field.field_type == "number":
+            try:
+                return float(stripped.replace(",", ""))
+            except ValueError:
+                return value
+        if field.field_type == "boolean":
+            lower = stripped.lower()
+            if lower in ("true", "yes", "1", "y"):
+                return True
+            if lower in ("false", "no", "0", "n"):
+                return False
+        return value
+
+    if field.field_type == "number" and isinstance(value, (int, float)):
+        return float(value)
+
+    return value
+
+
 def _is_valid_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     return bool(parsed.scheme and parsed.netloc)
@@ -31,6 +63,7 @@ def validate_record_values(
     values: dict[str, Any],
     *,
     lookup_allowed: dict[str, set[str]] | None = None,
+    lenient_select_fields: set[str] | None = None,
 ) -> dict[str, str]:
     """Return field_key -> error message for invalid values."""
     errors: dict[str, str] = {}
@@ -66,6 +99,8 @@ def validate_record_values(
             except (TypeError, ValueError):
                 errors[key] = "Enter a valid number"
         elif field.field_type == "single_select":
+            if lenient_select_fields and key in lenient_select_fields:
+                continue
             options = config.get("options") or []
             if options and str(value) not in [str(o) for o in options]:
                 errors[key] = "Select a valid option"
@@ -74,6 +109,8 @@ def validate_record_values(
             if allowed is not None and str(value) not in allowed:
                 errors[key] = "Select a valid lookup value"
         elif field.field_type == "multi_select":
+            if lenient_select_fields and key in lenient_select_fields:
+                continue
             selected = value if isinstance(value, list) else [value]
             options = config.get("options") or []
             if options:
