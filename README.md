@@ -265,7 +265,18 @@ npm run deploy          # dev → /Workspace/DBRX-Apps/data-collector/dev/<your-
 npm run deploy:prod     # prod
 ```
 
-The script will:
+**Manual apps deploy** (sync + `databricks apps deploy` without the full bundle):
+
+```bash
+npm run apps:deploy     # build, sync dist/backend only, deploy dev app
+npm run sync:workspace:watch   # watch sync (no package.json — avoids npm ENOTEMPTY on deploy)
+```
+
+Do **not** run bare `databricks sync . <workspace-path>` — it follows `.gitignore` only, uploads
+`package.json`, and the app runtime will run `npm install` (often failing with `ENOTEMPTY` if
+`node_modules` is partial). Use `scripts/sync_workspace.sh` instead.
+
+`npm run deploy` will:
 
 1. `mkdirs` the deploy folder (e.g. `/Workspace/DBRX-Apps`)
 2. Read `warehouse_id`, `catalog`, `schema`, and `app_name` from `databricks.yml` for the target
@@ -298,7 +309,7 @@ Without service-principal grants on the metadata schema, `/api/projects` returns
 
 **Enable user authorization on the app** (required for **existing-UC collection data** in hybrid mode, and for all data access in `user_obo` mode):
 
-Bundle deploy sets the **`sql`** scope via `user_api_scopes` in `resources/data-collector.app.yml`. After deploy, **stop and restart** the app (`databricks bundle run` or the Apps UI). Users may need to re-open the app and approve the scope.
+Bundle deploy sets the **`sql`** and **`sql.warehouses`** scopes via `user_api_scopes` in `resources/data-collector.app.yml`. After deploy, **stop and restart** the app (`databricks bundle run` or the Apps UI). Users may need to re-open the app and approve the scope.
 
 If you created the app outside the bundle, you can also set scopes in the UI:
 
@@ -306,7 +317,9 @@ If you created the app outside the bundle, you can also set scopes in the UI:
 2. Under **User authorization**, enable it and add the **`sql`** scope
 3. **Stop and restart** the app after changing scopes
 
-Databricks forwards the user's short-lived token in the `X-Forwarded-Access-Token` header. The app uses it for UC **browse** SQL and for **existing UC** collection data in hybrid mode so row/column policies and table grants apply per user.
+Databricks forwards the user's short-lived token in the `X-Forwarded-Access-Token` header. The app uses it for UC **browse** SQL and **existing UC** collection data in hybrid mode so row/column policies and table grants apply per user.
+
+**Genie Q&A** runs as the **app service principal** (not per-user). Spaces are created under `/Shared/brick-constructor/genie` and the app grants the SP `CAN_MANAGE` on each space. Members do not need individual Genie space permissions — only **Can use** on the app. After deploy, an admin should **Re-sync Genie space** once per form in Settings if spaces were created before this fix.
 
 **Hybrid mode — service principal on data schemas (managed collections):**
 

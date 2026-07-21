@@ -9,6 +9,9 @@
     "build": "tsc && vite build",
     "deploy": "bash scripts/deploy.sh",
     "deploy:prod": "bash scripts/deploy.sh prod",
+    "sync:workspace": "bash scripts/sync_workspace.sh",
+    "sync:workspace:watch": "bash scripts/sync_workspace.sh --watch",
+    "apps:deploy": "bash scripts/apps_deploy_dev.sh",
     "preview": "vite preview"
   },
   "dependencies": {
