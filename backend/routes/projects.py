@@ -4,7 +4,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, R
 
 from backend import audit_repository, config, repository, uc_grants
 from backend import auth, lookup_repository
-from backend.csv_util import infer_fields_from_csv, parse_records_csv, preview_records_csv, records_to_csv
+from backend.csv_util import (
+    expand_select_fields_for_import,
+    infer_fields_from_csv,
+    parse_records_csv,
+    preview_records_csv,
+    records_to_csv,
+)
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
@@ -780,6 +786,23 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        original_fields = {field.field_key: field for field in fields}
+        fields, lenient_select_fields = expand_select_fields_for_import(fields, parsed)
+        config_updates = {
+            field.field_key: field.config_json
+            for field in fields
+            if field.field_key in original_fields
+            and field.config_json != original_fields[field.field_key].config_json
+            and field.config_json is not None
+        }
+        if config_updates:
+            repository.update_published_field_configs(
+                project_id,
+                int(project["schema_version"]),
+                config_updates,
+                user,
+            )
+
         lookup_allowed = build_lookup_allowed(fields, project_id)
         rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
         failed: list[ImportRecordError] = []
@@ -791,6 +814,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
                 values,
                 lookup_allowed=lookup_allowed,
                 rows_by_lookup_id=rows_by_lookup_id,
+                lenient_select_fields=lenient_select_fields,
             )
             if errors:
                 failed.append(ImportRecordError(row=row_num, field_errors=errors))

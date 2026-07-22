@@ -79,9 +79,29 @@ type ApiErrorDetail =
 
 function parseApiError(status: number, text: string): Error {
   try {
-    const json = JSON.parse(text) as { detail?: ApiErrorDetail };
+    const json = JSON.parse(text) as { detail?: ApiErrorDetail | Array<{ msg?: string; loc?: unknown[] }> };
     const detail = json.detail;
-    if (detail && typeof detail === 'object') {
+    if (Array.isArray(detail)) {
+      const csvTooLong = detail.find(
+        (item) =>
+          item.loc &&
+          Array.isArray(item.loc) &&
+          item.loc.includes('csv') &&
+          String(item.msg || '').includes('at most'),
+      );
+      if (csvTooLong) {
+        return new Error(
+          'CSV file is too large for upload. Try a smaller file, or create the form first and import records from the Records tab.',
+        );
+      }
+      const messages = detail
+        .map((item) => item.msg)
+        .filter((msg): msg is string => Boolean(msg));
+      if (messages.length) {
+        return new Error(messages.join(' '));
+      }
+    }
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
       if (detail.field_errors) {
         return new ApiValidationError(detail.field_errors);
       }

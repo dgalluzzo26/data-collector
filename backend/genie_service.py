@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from backend import config, repository
+from backend import repository
 from backend.genie_client import workspace_client
 from backend.models import FieldDefinition
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -34,7 +37,47 @@ def _warehouse_id() -> str:
 
 def _genie_parent_path() -> Optional[str]:
     """Optional workspace folder for new Genie spaces (not Unity Catalog)."""
-    return (os.environ.get("GENIE_PARENT_PATH") or "").strip() or None
+    return (
+        (os.environ.get("GENIE_PARENT_PATH") or "").strip()
+        or "/Shared/brick-constructor/genie"
+    )
+
+
+def _is_genie_access_denied(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "does not have read permission" in msg or "permission_denied" in msg
+
+
+def _service_principal_id() -> str | None:
+    sp = (os.environ.get("DATABRICKS_CLIENT_ID") or "").strip()
+    return sp or None
+
+
+def _client():
+    """Genie always runs as the app service principal (shared per collection)."""
+    return workspace_client()
+
+
+def _ensure_sp_genie_space_access(client: Any, space_id: str) -> None:
+    """Ensure the app service principal can run Genie against this space."""
+    sp_id = _service_principal_id()
+    if not sp_id:
+        return
+    try:
+        client.api_client.do(
+            "PUT",
+            f"/api/2.0/permissions/genie/{space_id}",
+            body={
+                "access_control_list": [
+                    {
+                        "service_principal_name": sp_id,
+                        "permission_level": "CAN_MANAGE",
+                    }
+                ]
+            },
+        )
+    except Exception as exc:
+        logger.warning("Could not grant Genie space access to SP %s: %s", sp_id, exc)
 
 
 def _ensure_workspace_folder(client: Any, path: str) -> None:
@@ -167,7 +210,7 @@ def _attach_query_results(
     if not attachment_id:
         return parsed
 
-    client = workspace_client()
+    client = _client()
     try:
         result = client.genie.get_message_attachment_query_result(
             space_id, conversation_id, message_id, attachment_id
@@ -211,20 +254,26 @@ def provision_genie_space(project_id: str, user_email: str) -> None:
     )
 
     try:
-        client = workspace_client()
+        client = _client()
         warehouse_id = _warehouse_id()
         space_id = project.get("genie_space_id")
 
         if space_id:
-            existing = client.genie.get_space(space_id, include_serialized_space=True)
-            client.genie.update_space(
-                space_id,
-                serialized_space=serialized,
-                title=title,
-                warehouse_id=warehouse_id,
-                etag=existing.etag,
-            )
-        else:
+            try:
+                existing = client.genie.get_space(space_id, include_serialized_space=True)
+                client.genie.update_space(
+                    space_id,
+                    serialized_space=serialized,
+                    title=title,
+                    warehouse_id=warehouse_id,
+                    etag=existing.etag,
+                )
+            except Exception as exc:
+                if not _is_genie_access_denied(exc):
+                    raise
+                space_id = None
+
+        if not space_id:
             if parent_path:
                 _ensure_workspace_folder(client, parent_path)
             create_kwargs: dict[str, Any] = {
@@ -237,6 +286,8 @@ def provision_genie_space(project_id: str, user_email: str) -> None:
                 create_kwargs["parent_path"] = parent_path
             created = client.genie.create_space(**create_kwargs)
             space_id = created.space_id
+
+        _ensure_sp_genie_space_access(client, space_id)
 
         repository.update_project(
             project_id,
@@ -281,7 +332,7 @@ def ask_question(
     if not question:
         raise ValueError("Question cannot be empty")
 
-    client = workspace_client()
+    client = _client()
     if conversation_id:
         message = client.genie.create_message_and_wait(space_id, conversation_id, question)
     else:

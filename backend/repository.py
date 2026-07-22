@@ -332,6 +332,30 @@ def replace_draft_fields(project_id: str, fields: list[FieldDefinition], user_em
     update_project(project_id, {}, user_email)
 
 
+def update_published_field_configs(
+    project_id: str,
+    schema_version: int,
+    config_updates: dict[str, dict[str, Any]],
+    user_email: str,
+) -> None:
+    """Patch config_json on published field rows (e.g. expand select options after CSV import)."""
+    if not config_updates:
+        return
+    for field_key, config_json in config_updates.items():
+        execute(
+            f"""
+            UPDATE {_table('field_definitions')}
+            SET config_json = ?
+            WHERE project_id = ?
+              AND field_key = ?
+              AND is_published = true
+              AND schema_version = ?
+            """,
+            (json.dumps(config_json), project_id, field_key, schema_version),
+        )
+    update_project(project_id, {}, user_email)
+
+
 def _sql_type(field_type: str) -> str:
     mapping = {
         "text": "STRING",
@@ -1044,7 +1068,6 @@ def _insert_record_to_uc(
     skip_duplicate_check: bool = False,
 ) -> dict[str, Any]:
     data_table = _data_table_fqn(project)
-    record_key_col = _record_key_column(project)
     now = _now()
     existing_cols = _describe_column_names(data_table)
 
@@ -1055,7 +1078,7 @@ def _insert_record_to_uc(
 
     cols: list[str] = []
     vals: list[Any] = []
-    if not record_key_col and _table_has_column(existing_cols, "_record_id"):
+    if _table_has_column(existing_cols, "_record_id"):
         cols.append(_quote_col("_record_id"))
         vals.append(record_id)
     if _table_has_column(existing_cols, "_created_at"):
@@ -1293,12 +1316,11 @@ def _insert_records_batch_to_uc(
         return []
 
     data_table = _data_table_fqn(project)
-    record_key_col = _record_key_column(project)
     existing_cols = _describe_column_names(data_table)
     now = _now()
 
     cols: list[str] = []
-    include_record_id = not record_key_col and _table_has_column(existing_cols, "_record_id")
+    include_record_id = _table_has_column(existing_cols, "_record_id")
     if include_record_id:
         cols.append(_quote_col("_record_id"))
     if _table_has_column(existing_cols, "_created_at"):

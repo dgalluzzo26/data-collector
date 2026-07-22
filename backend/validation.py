@@ -174,6 +174,7 @@ def validate_record_values(
     *,
     lookup_allowed: dict[str, set[str]] | None = None,
     rows_by_lookup_id: dict[str, list[LookupRow]] | None = None,
+    lenient_select_fields: set[str] | None = None,
 ) -> dict[str, str]:
     """Return field_key -> error message for invalid values."""
     errors: dict[str, str] = {}
@@ -210,6 +211,8 @@ def validate_record_values(
             except (TypeError, ValueError):
                 errors[key] = "Enter a valid number"
         elif field.field_type == "single_select":
+            if lenient_select_fields and key in lenient_select_fields:
+                continue
             options = config.get("options") or []
             if options and str(value) not in [str(o) for o in options]:
                 errors[key] = "Select a valid option"
@@ -218,6 +221,8 @@ def validate_record_values(
             if allowed is not None and str(value) not in allowed:
                 errors[key] = "Select a valid lookup value"
         elif field.field_type == "multi_select":
+            if lenient_select_fields and key in lenient_select_fields:
+                continue
             selected = value if isinstance(value, list) else [value]
             options = config.get("options") or []
             if options:

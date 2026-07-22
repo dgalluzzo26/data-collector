@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# Max CSV payload size for API requests (~35 MB). Large files are streamed row-wise on the server.
+CSV_MAX_CHARS = 35_000_000
+
 from datetime import datetime
 from typing import Any, Literal, Optional
 
@@ -192,13 +195,13 @@ class RecordAuditEntry(BaseModel):
 
 
 class ImportRecordsCsvRequest(BaseModel):
-    csv: str = Field(min_length=1, max_length=2_000_000)
+    csv: str = Field(min_length=1, max_length=CSV_MAX_CHARS)
     header_row: int = Field(default=1, ge=1)
     field_keys: Optional[list[str]] = None
 
 
 class PreviewRecordsCsvRequest(BaseModel):
-    csv: str = Field(min_length=1, max_length=2_000_000)
+    csv: str = Field(min_length=1, max_length=CSV_MAX_CHARS)
     header_row: int = Field(default=1, ge=1)
 
 
@@ -307,7 +310,7 @@ class SaveLookupRowsRequest(BaseModel):
 
 
 class ImportLookupCsvRequest(BaseModel):
-    csv: str = Field(min_length=1, max_length=2_000_000)
+    csv: str = Field(min_length=1, max_length=CSV_MAX_CHARS)
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
 
@@ -462,7 +465,7 @@ class BrandingUpdateRequest(BaseModel):
 
 
 class PreviewCsvRequest(BaseModel):
-    csv: str = Field(min_length=1, max_length=2_000_000)
+    csv: str = Field(min_length=1, max_length=CSV_MAX_CHARS)
     header_row: int = Field(default=1, ge=1)
 
 
