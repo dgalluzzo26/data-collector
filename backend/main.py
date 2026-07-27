@@ -7,8 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.routes import ai, branding, genie, health, lookups, me, projects, uc
-from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
+from backend.routes import ai, branding, genie, health, lakebase_browse, lakebase_settings, lookups, me, projects, uc
+from backend.sql_errors import (
+    LakebaseDataError,
+    LakebasePermissionError,
+    SqlPermissionError,
+    UserAuthorizationRequiredError,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +46,19 @@ async def sql_permission_handler(_request: Request, exc: SqlPermissionError):
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
+@app.exception_handler(LakebasePermissionError)
+async def lakebase_permission_handler(_request: Request, exc: LakebasePermissionError):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(LakebaseDataError)
+async def lakebase_data_handler(_request: Request, exc: LakebaseDataError):
+    detail: dict[str, object] = {"message": str(exc)}
+    if exc.column:
+        detail["field_errors"] = {exc.column: str(exc)}
+    return JSONResponse(status_code=400, content={"detail": detail})
+
+
 @app.exception_handler(UserAuthorizationRequiredError)
 async def user_auth_required_handler(_request: Request, exc: UserAuthorizationRequiredError):
     return JSONResponse(status_code=403, content={"detail": str(exc)})
@@ -57,6 +75,8 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(branding.router, prefix="/api")
+app.include_router(lakebase_settings.router, prefix="/api")
+app.include_router(lakebase_browse.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(lookups.router, prefix="/api")
 app.include_router(genie.router, prefix="/api")

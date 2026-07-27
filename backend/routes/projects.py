@@ -207,15 +207,15 @@ def create_project(body: CreateProjectRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if body.storage_mode == "existing_uc":
-        if body.storage_type != "uc_delta":
+        if body.storage_type not in ("uc_delta", "lakebase"):
             raise HTTPException(
                 status_code=400,
-                detail="Existing UC table mode requires Unity Catalog (Delta) storage",
+                detail="Existing table mode requires Unity Catalog or Lakebase storage",
             )
         if not body.record_key_column or not body.record_key_column.strip():
             raise HTTPException(
                 status_code=400,
-                detail="record_key_column is required when using an existing UC table",
+                detail="record_key_column is required when using an existing table",
             )
 
     with request_connections(request):
@@ -309,10 +309,10 @@ def update_project(project_id: str, body: UpdateProjectRequest, request: Request
                 status_code=400,
                 detail="Cannot change record sync mode after the collection is published",
             )
-        if project.get("storage_type") != "uc_delta":
+        if project.get("storage_type") not in ("uc_delta", "lakebase"):
             raise HTTPException(
                 status_code=400,
-                detail="Record sync mode applies only to Unity Catalog collections",
+                detail="Record sync mode applies only to Unity Catalog and Lakebase collections",
             )
 
     if "duplicate_key_mode" in updates:
@@ -675,7 +675,7 @@ def sync_staged_records(project_id: str, request: Request):
         if project.get("status") != "published":
             raise HTTPException(
                 status_code=400,
-                detail="Collection must be published before syncing records to Unity Catalog",
+                detail="Collection must be published before syncing staged records",
             )
         fields = repository.list_fields(project_id, published_only=True, project=project)
         try:

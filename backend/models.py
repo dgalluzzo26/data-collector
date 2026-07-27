@@ -238,12 +238,14 @@ class SyncStagedRecordsResult(BaseModel):
     inserted: int
     updated: int
     deleted: int
+    skipped: int = 0
 
 
 class LookupColumn(BaseModel):
     key: str
     label: str
     type: Literal["text", "number", "date", "datetime", "boolean"] = "text"
+    required: bool = False
 
 
 class LookupTable(BaseModel):
@@ -462,6 +464,27 @@ class BrandingUpdateRequest(BaseModel):
     @classmethod
     def _logo(cls, value: Optional[str]) -> Optional[str]:
         return _validate_logo(value)
+
+
+class LakebaseSettingsConfig(BaseModel):
+    data_api_url: Optional[str] = None
+
+
+class LakebaseSettingsUpdateRequest(BaseModel):
+    data_api_url: Optional[str] = Field(default=None, max_length=2000)
+    clear_data_api_url: bool = False
+
+    @field_validator("data_api_url")
+    @classmethod
+    def _data_api_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if not trimmed.startswith(("http://", "https://")):
+            raise ValueError("Data API URL must start with http:// or https://")
+        return trimmed.rstrip("/")
 
 
 class PreviewCsvRequest(BaseModel):

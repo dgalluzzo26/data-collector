@@ -10,6 +10,7 @@ import type {
   FieldDefinition,
   GenieAskResponse,
   GenieStatus,
+  LakebaseSettings,
   LookupColumn,
   LookupProposal,
   LookupRow,
@@ -191,6 +192,31 @@ export const api = {
       { method: 'POST' },
       'Applying palette…',
     ),
+  getLakebaseSettings: () =>
+    request<LakebaseSettings>('/lakebase-settings', undefined, 'Loading Lakebase settings…'),
+  updateLakebaseSettings: (body: Partial<LakebaseSettings> & { clear_data_api_url?: boolean }) =>
+    request<LakebaseSettings>(
+      '/lakebase-settings',
+      { method: 'PUT', body: JSON.stringify(body) },
+      'Saving Lakebase settings…',
+    ),
+  listLakebaseDatabases: () =>
+    request<string[]>('/lakebase/databases', undefined, 'Loading Lakebase databases…'),
+  listLakebaseSchemas: () =>
+    request<string[]>('/lakebase/schemas', undefined, 'Loading Lakebase schemas…'),
+  listLakebaseTables: (schema: string) =>
+    request<string[]>(
+      `/lakebase/tables?schema=${encodeURIComponent(schema)}`,
+      undefined,
+      'Loading Lakebase tables…',
+    ),
+  previewLakebaseTable: (schema: string, table: string) =>
+    request<UcTablePreview>(
+      `/lakebase/preview?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`,
+      undefined,
+      'Loading Lakebase table preview…',
+      120_000,
+    ),
 
   listUcCatalogSchemas: (catalog: string) =>
     request<string[]>(`/uc/schemas?catalog=${encodeURIComponent(catalog)}`, undefined, 'Loading schemas…'),
@@ -292,7 +318,7 @@ export const api = {
     request<SyncStagedRecordsResult>(
       `/projects/${id}/records/sync-to-uc`,
       { method: 'POST' },
-      'Syncing to Unity Catalog…',
+      'Syncing staged records…',
       120_000,
     ),
   getRecordAudit: (id: string, recordId: string) =>
