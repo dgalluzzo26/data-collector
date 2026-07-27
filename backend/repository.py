@@ -52,7 +52,7 @@ def _is_existing_uc(project: dict[str, Any]) -> bool:
 
 def _uses_staged_sync(project: dict[str, Any]) -> bool:
     return (
-        project.get("storage_type") == "uc_delta"
+        project.get("storage_type") in ("uc_delta", "lakebase")
         and project.get("record_sync_mode") == "staged"
     )
 
@@ -689,9 +689,16 @@ def publish_project(project_id: str, user_email: str) -> dict[str, Any]:
     if not project:
         raise ValueError("Project not found")
 
-    if project.get("storage_type") == "uc_delta" and not project.get("record_sync_mode"):
+    if project.get("storage_type") in ("uc_delta", "lakebase") and not project.get(
+        "record_sync_mode"
+    ):
+        target = (
+            "Lakebase"
+            if project.get("storage_type") == "lakebase"
+            else "Unity Catalog"
+        )
         raise ValueError(
-            "Choose how record changes sync to Unity Catalog in Settings before publishing."
+            f"Choose how record changes sync to {target} in Settings before publishing."
         )
 
     fields = list_fields(project_id, published_only=False)
@@ -798,15 +805,16 @@ def list_records(
     if _is_lakebase(project):
         from backend import lakebase_storage
 
-        return lakebase_storage.list_records(project, fields)
-    with project_data_scope(project):
-        uc_rows = _list_records_from_uc(project, fields, limit=limit, offset=offset)
+        rows = lakebase_storage.list_records(project, fields)
+    else:
+        with project_data_scope(project):
+            rows = _list_records_from_uc(project, fields, limit=limit, offset=offset)
     if _uses_staged_sync(project):
         from backend import staged_records
 
         staged = staged_records.list_staged(project["project_id"])
-        return staged_records.merge_uc_with_staged(uc_rows, staged)
-    return uc_rows
+        return staged_records.merge_uc_with_staged(rows, staged)
+    return rows
 
 
 def _list_records_from_uc(
@@ -840,30 +848,33 @@ def get_record(
     if _is_lakebase(project):
         from backend import lakebase_storage
 
-        return lakebase_storage.get_record(project, fields, record_id)
-    with project_data_scope(project):
-        if _uses_staged_sync(project):
-            from backend import staged_records
+        base_row = lakebase_storage.get_record(project, fields, record_id)
+    else:
+        with project_data_scope(project):
+            base_row = _get_record_from_uc(project, fields, record_id)
 
-            staged_row = staged_records.get_staged(project["project_id"], record_id)
-            if staged_row and staged_row["operation"] == "delete":
-                return None
-            uc_row = _get_record_from_uc(project, fields, record_id)
-            if staged_row:
-                if staged_row["operation"] == "insert":
-                    return staged_records._staged_to_record(staged_row)
-                if staged_row["operation"] == "update":
-                    staged_rec = staged_records._staged_to_record(staged_row)
-                    if uc_row:
-                        return {
-                            **uc_row,
-                            "values": {**uc_row["values"], **staged_rec["values"]},
-                            "updated_at": staged_rec.get("updated_at"),
-                            "updated_by": staged_rec.get("updated_by"),
-                        }
-                    return staged_rec
-            return uc_row
-        return _get_record_from_uc(project, fields, record_id)
+    if not _uses_staged_sync(project):
+        return base_row
+
+    from backend import staged_records
+
+    staged_row = staged_records.get_staged(project["project_id"], record_id)
+    if staged_row and staged_row["operation"] == "delete":
+        return None
+    if staged_row:
+        if staged_row["operation"] == "insert":
+            return staged_records._staged_to_record(staged_row)
+        if staged_row["operation"] == "update":
+            staged_rec = staged_records._staged_to_record(staged_row)
+            if base_row:
+                return {
+                    **base_row,
+                    "values": {**base_row["values"], **staged_rec["values"]},
+                    "updated_at": staged_rec.get("updated_at"),
+                    "updated_by": staged_rec.get("updated_by"),
+                }
+            return staged_rec
+    return base_row
 
 
 def _get_record_from_uc(
@@ -979,6 +990,33 @@ def _overwrite_existing_record(
             "updated_by": user_email,
         }
 
+    if _is_lakebase(project):
+        from backend import lakebase_storage
+
+        if lakebase_storage.record_exists(project, record_id):
+            lakebase_storage.update_record(project, fields, record_id, values, user_email)
+        else:
+            # Ensure the record key is present for insert when using a key column.
+            key_col = _record_key_column(project)
+            insert_values = dict(values)
+            if key_col and key_col not in insert_values:
+                insert_values[key_col] = record_id
+            lakebase_storage.create_record(
+                project, fields, insert_values, user_email, record_id=record_id
+            )
+        updated = get_record(project, fields, record_id)
+        if updated:
+            return updated
+        now = _now()
+        return {
+            "record_id": record_id,
+            "values": values,
+            "created_at": now,
+            "created_by": user_email,
+            "updated_at": now,
+            "updated_by": user_email,
+        }
+
     if _record_exists_in_uc(project, record_id):
         _update_record_in_uc(project, fields, record_id, values, user_email)
     else:
@@ -1005,6 +1043,10 @@ def _overwrite_existing_record(
 
 
 def _record_exists_in_uc(project: dict[str, Any], record_id: str) -> bool:
+    if _is_lakebase(project):
+        from backend import lakebase_storage
+
+        return lakebase_storage.record_exists(project, record_id)
     data_table = _data_table_fqn(project)
     record_key_col = _record_key_column(project)
     where_sql, params = _record_where_clause(record_key_col, record_id)
@@ -1018,36 +1060,42 @@ def create_record(
     values: dict[str, Any],
     user_email: str,
 ) -> dict[str, Any]:
+    if _uses_staged_sync(project):
+        record_id = _resolve_new_record_id(project, values)
+        if _record_key_column(project) and _record_id_is_taken(project, record_id):
+            if _duplicate_key_mode(project) == "overwrite":
+                return _overwrite_existing_record(project, fields, record_id, values, user_email)
+            raise ValueError("A record with this id already exists")
+        from backend import staged_records
+
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            "insert",
+            values,
+            user_email,
+        )
+        now = _now()
+        return {
+            "record_id": record_id,
+            "values": values,
+            "created_at": now,
+            "created_by": user_email,
+            "updated_at": now,
+            "updated_by": user_email,
+        }
+
     if _is_lakebase(project):
         from backend import lakebase_storage
 
         return lakebase_storage.create_record(project, fields, values, user_email)
+
     with project_data_scope(project):
         record_id = _resolve_new_record_id(project, values)
         if _record_key_column(project) and _record_id_is_taken(project, record_id):
             if _duplicate_key_mode(project) == "overwrite":
                 return _overwrite_existing_record(project, fields, record_id, values, user_email)
             raise ValueError("A record with this id already exists")
-
-        if _uses_staged_sync(project):
-            from backend import staged_records
-
-            staged_records.upsert_staged(
-                project["project_id"],
-                record_id,
-                "insert",
-                values,
-                user_email,
-            )
-            now = _now()
-            return {
-                "record_id": record_id,
-                "values": values,
-                "created_at": now,
-                "created_by": user_email,
-                "updated_at": now,
-                "updated_by": user_email,
-            }
         return _insert_record_to_uc(
             project,
             fields,
@@ -1124,29 +1172,31 @@ def update_record(
     values: dict[str, Any],
     user_email: str,
 ) -> None:
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        existing = get_record(project, fields, record_id)
+        if not existing:
+            raise ValueError("Record not found")
+        merged_values = {**existing["values"], **values}
+        staged_row = staged_records.get_staged(project["project_id"], record_id)
+        operation = "insert" if staged_row and staged_row["operation"] == "insert" else "update"
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            operation,
+            merged_values,
+            user_email,
+        )
+        return
+
     if _is_lakebase(project):
         from backend import lakebase_storage
 
         lakebase_storage.update_record(project, fields, record_id, values, user_email)
         return
-    with project_data_scope(project):
-        if _uses_staged_sync(project):
-            from backend import staged_records
 
-            existing = get_record(project, fields, record_id)
-            if not existing:
-                raise ValueError("Record not found")
-            merged_values = {**existing["values"], **values}
-            staged_row = staged_records.get_staged(project["project_id"], record_id)
-            operation = "insert" if staged_row and staged_row["operation"] == "insert" else "update"
-            staged_records.upsert_staged(
-                project["project_id"],
-                record_id,
-                operation,
-                merged_values,
-                user_email,
-            )
-            return
+    with project_data_scope(project):
         _update_record_in_uc(project, fields, record_id, values, user_email)
 
 
@@ -1185,29 +1235,31 @@ def _update_record_in_uc(
 
 def delete_record(project: dict[str, Any], record_id: str, user_email: str) -> bool:
     """Delete a record by id. Returns False if not found."""
+    if _uses_staged_sync(project):
+        from backend import staged_records
+
+        staged_row = staged_records.get_staged(project["project_id"], record_id)
+        backing_exists = _record_exists_in_uc(project, record_id)
+        if not backing_exists and not staged_row:
+            return False
+        if staged_row and staged_row["operation"] == "insert" and not backing_exists:
+            staged_records.delete_staged(project["project_id"], record_id)
+            return True
+        staged_records.upsert_staged(
+            project["project_id"],
+            record_id,
+            "delete",
+            None,
+            user_email,
+        )
+        return True
+
     if _is_lakebase(project):
         from backend import lakebase_storage
 
         return lakebase_storage.delete_record(project, record_id)
-    with project_data_scope(project):
-        if _uses_staged_sync(project):
-            from backend import staged_records
 
-            staged_row = staged_records.get_staged(project["project_id"], record_id)
-            uc_exists = _record_exists_in_uc(project, record_id)
-            if not uc_exists and not staged_row:
-                return False
-            if staged_row and staged_row["operation"] == "insert" and not uc_exists:
-                staged_records.delete_staged(project["project_id"], record_id)
-                return True
-            staged_records.upsert_staged(
-                project["project_id"],
-                record_id,
-                "delete",
-                None,
-                user_email,
-            )
-            return True
+    with project_data_scope(project):
         return _delete_record_from_uc(project, record_id)
 
 
@@ -1240,39 +1292,83 @@ def sync_staged_records(
 
     rows = staged_records.list_staged(project["project_id"])
     if not rows:
-        return {"synced": 0, "inserted": 0, "updated": 0, "deleted": 0}
+        return {"synced": 0, "inserted": 0, "updated": 0, "deleted": 0, "skipped": 0}
 
-    inserted = updated = deleted = 0
-    with project_data_scope(project):
+    inserted = updated = deleted = skipped = 0
+    synced_ids: list[str] = []
+    if _is_lakebase(project):
+        from backend import lakebase_storage
+
         for row in rows:
             record_id = row["record_id"]
             operation = row["operation"]
             if operation == "delete":
-                if _delete_record_from_uc(project, record_id):
-                    deleted += 1
+                if lakebase_storage.record_exists(project, record_id):
+                    lakebase_storage.delete_record(project, record_id)
+                deleted += 1
+                synced_ids.append(record_id)
                 continue
             values = json.loads(row["values_json"] or "{}")
             if operation == "insert":
-                if _get_record_from_uc(project, fields, record_id):
+                if lakebase_storage.record_exists(project, record_id):
                     if _duplicate_key_mode(project) == "overwrite":
-                        _update_record_in_uc(project, fields, record_id, values, user_email)
+                        lakebase_storage.update_record(
+                            project, fields, record_id, values, user_email
+                        )
                         updated += 1
+                        synced_ids.append(record_id)
+                    else:
+                        skipped += 1
                     continue
-                _insert_record_to_uc(
-                    project,
-                    fields,
-                    values,
-                    user_email,
-                    record_id=record_id,
-                    skip_duplicate_check=True,
+                key_col = _record_key_column(project)
+                insert_values = dict(values)
+                if key_col and key_col not in insert_values:
+                    insert_values[key_col] = record_id
+                lakebase_storage.create_record(
+                    project, fields, insert_values, user_email, record_id=record_id
                 )
                 inserted += 1
+                synced_ids.append(record_id)
                 continue
             if operation == "update":
-                if _get_record_from_uc(project, fields, record_id):
-                    _update_record_in_uc(project, fields, record_id, values, user_email)
+                if lakebase_storage.record_exists(project, record_id):
+                    lakebase_storage.update_record(
+                        project, fields, record_id, values, user_email
+                    )
                     updated += 1
                 else:
+                    key_col = _record_key_column(project)
+                    insert_values = dict(values)
+                    if key_col and key_col not in insert_values:
+                        insert_values[key_col] = record_id
+                    lakebase_storage.create_record(
+                        project, fields, insert_values, user_email, record_id=record_id
+                    )
+                    inserted += 1
+                synced_ids.append(record_id)
+    else:
+        with project_data_scope(project):
+            for row in rows:
+                record_id = row["record_id"]
+                operation = row["operation"]
+                if operation == "delete":
+                    if _get_record_from_uc(project, fields, record_id):
+                        _delete_record_from_uc(project, record_id)
+                    deleted += 1
+                    synced_ids.append(record_id)
+                    continue
+                values = json.loads(row["values_json"] or "{}")
+                if operation == "insert":
+                    if _get_record_from_uc(project, fields, record_id):
+                        if _duplicate_key_mode(project) == "overwrite":
+                            _update_record_in_uc(
+                                project, fields, record_id, values, user_email
+                            )
+                            updated += 1
+                            synced_ids.append(record_id)
+                        else:
+                            skipped += 1
+                        continue
                     _insert_record_to_uc(
                         project,
                         fields,
@@ -1282,10 +1378,36 @@ def sync_staged_records(
                         skip_duplicate_check=True,
                     )
                     inserted += 1
+                    synced_ids.append(record_id)
+                    continue
+                if operation == "update":
+                    if _get_record_from_uc(project, fields, record_id):
+                        _update_record_in_uc(
+                            project, fields, record_id, values, user_email
+                        )
+                        updated += 1
+                    else:
+                        _insert_record_to_uc(
+                            project,
+                            fields,
+                            values,
+                            user_email,
+                            record_id=record_id,
+                            skip_duplicate_check=True,
+                        )
+                        inserted += 1
+                    synced_ids.append(record_id)
 
-    staged_records.clear_staged(project["project_id"])
+    for record_id in synced_ids:
+        staged_records.delete_staged(project["project_id"], record_id)
     synced = inserted + updated + deleted
-    return {"synced": synced, "inserted": inserted, "updated": updated, "deleted": deleted}
+    return {
+        "synced": synced,
+        "inserted": inserted,
+        "updated": updated,
+        "deleted": deleted,
+        "skipped": skipped,
+    }
 
 
 _IMPORT_BATCH_SIZE = 50
@@ -1567,23 +1689,14 @@ def import_record_row(
     record_key_col = _record_key_column(project)
     if record_key_col:
         record_id = _resolve_new_record_id(project, values)
-        if _record_id_is_taken(project, record_id):
+        existing = get_record(project, fields, record_id)
+        if existing:
             if _duplicate_key_mode(project) == "retain":
                 return "skipped", None, None
-            if _is_lakebase(project):
-                from backend import lakebase_storage
-
-                raise ValueError("Duplicate key handling is not supported for Lakebase collections")
-            with project_data_scope(project):
-                existing = get_record(project, fields, record_id)
-                row = _overwrite_existing_record(project, fields, record_id, values, user_email)
-            return "updated", row, existing["values"] if existing else None
-
-    if _is_lakebase(project):
-        from backend import lakebase_storage
-
-        return "created", lakebase_storage.create_record(project, fields, values, user_email), None
-
-    with project_data_scope(project):
+            row = _overwrite_existing_record(project, fields, record_id, values, user_email)
+            return "updated", row, existing["values"]
         row = create_record(project, fields, values, user_email)
+        return "created", row, None
+
+    row = create_record(project, fields, values, user_email)
     return "created", row, None

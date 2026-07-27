@@ -10,6 +10,7 @@ import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
 import type { AppConfig } from '../../types';
 import BrandingAdminPanel from './BrandingAdminPanel';
+import LakebaseDataApiPanel from './LakebaseDataApiPanel';
 
 function ConfigRow({ label, value }: { label: string; value?: string | null }) {
   return (
@@ -26,11 +27,15 @@ export default function SettingsView() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const refreshConfig = () => {
     api
       .getConfig()
       .then(setConfig)
       .catch((err: Error) => setError(err.message));
+  };
+
+  useEffect(() => {
+    refreshConfig();
   }, []);
 
   return (
@@ -55,7 +60,12 @@ export default function SettingsView() {
         </Alert>
       )}
 
-      {config?.is_app_admin && <BrandingAdminPanel />}
+      {config?.is_app_admin && (
+        <>
+          <LakebaseDataApiPanel onSaved={refreshConfig} />
+          <BrandingAdminPanel />
+        </>
+      )}
 
       <Paper className="page-card" sx={{ p: 2.5, mb: 2 }}>
         <Typography variant="subtitle1" fontWeight={600} gutterBottom>
@@ -76,6 +86,11 @@ export default function SettingsView() {
             <ConfigRow label="Lakebase configured" value={config?.lakebase_configured ? 'yes' : 'no'} />
             <ConfigRow label="Lakebase database" value={config?.lakebase_database} />
             <ConfigRow label="Lakebase default schema" value={config?.lakebase_default_schema} />
+            <ConfigRow
+              label="Lakebase Data API linked"
+              value={config?.lakebase_data_api_linked ? 'yes' : 'no'}
+            />
+            <ConfigRow label="Lakebase Data API URL" value={config?.lakebase_data_api_url} />
           </TableBody>
         </Table>
       </Paper>
@@ -89,7 +104,8 @@ export default function SettingsView() {
           <code>DATABRICKS_HOST</code>, <code>DATABRICKS_TOKEN</code>, and{' '}
           <code>DATABRICKS_WAREHOUSE_ID</code>. Set <code>DEV_USER_EMAIL</code> to your workspace
           email so local forms match the deployed app. Set <code>APP_ADMIN_EMAILS</code> to
-          your email (comma-separated) to edit app branding in Settings.
+          your email (comma-separated) to edit app branding and Lakebase Data API settings in
+          Settings.
         </Typography>
       </Paper>
     </Box>

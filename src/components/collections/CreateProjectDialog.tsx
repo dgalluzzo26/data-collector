@@ -38,6 +38,7 @@ import type {
   UcTablePreview,
 } from '../../types';
 import BusyButton from '../common/BusyButton';
+import LakebaseTableSelector from '../common/LakebaseTableSelector';
 import StorageSchemaSelect from '../common/StorageSchemaSelect';
 import UcTableSelector from '../common/UcTableSelector';
 
@@ -107,7 +108,7 @@ function buildSeedFields(
       label: col.label,
       field_type: col.type ?? 'text',
       sort_order: sortOrder,
-      is_required: col.key === recordKeyColumn,
+      is_required: col.key === recordKeyColumn || col.required === true,
       config_json: col.key === recordKeyColumn ? { is_record_key: true } : undefined,
       schema_version: 0,
       is_published: false,
@@ -482,7 +483,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
       const project = await api.createProject({
         name: name.trim(),
         description: description.trim() || undefined,
-        storage_type: creationMode === 'existing_uc_table' ? 'uc_delta' : storageType,
+        storage_type: storageType,
         storage_mode: creationMode === 'existing_uc_table' ? 'existing_uc' : 'managed',
         record_key_column:
           creationMode === 'existing_uc_table' || creationMode === 'import_csv'
@@ -589,9 +590,6 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               setSelectedColumnKeys(new Set());
               setRecordKeyColumn('');
               setError(null);
-              if (mode === 'existing_uc_table') {
-                setStorageType('uc_delta');
-              }
             }}
           >
             <FormControlLabel
@@ -602,7 +600,11 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
             <FormControlLabel
               value="existing_uc_table"
               control={<Radio />}
-              label="Use an existing Unity Catalog table"
+              label={
+                storageType === 'lakebase'
+                  ? 'Use an existing Lakebase table'
+                  : 'Use an existing Unity Catalog table'
+              }
             />
             <FormControlLabel value="import_csv" control={<Radio />} label="Import from CSV" />
           </RadioGroup>
@@ -610,23 +612,59 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
 
         {creationMode === 'existing_uc_table' ? (
           <Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Pick a UC table to build your form from. Existing rows can be viewed and updated after
-              you publish.
-            </Typography>
-            <UcTableSelector
-              catalog={targetCatalog}
-              schema={targetSchema}
-              table={targetTable}
-              onCatalogChange={setTargetCatalog}
-              onSchemaChange={setTargetSchema}
-              onTableChange={setTargetTable}
-              onPreviewLoaded={handlePreviewLoaded}
-              onPreviewCleared={() => {
+            <TextField
+              select
+              size="small"
+              label="Storage"
+              value={storageType}
+              onChange={(e) => {
+                const next = e.target.value as StorageType;
+                setStorageType(next);
                 setTablePreview(null);
                 setSelectedColumnKeys(new Set());
+                setRecordKeyColumn('');
+                setTargetTable('');
+                setError(null);
               }}
-            />
+              sx={{ mb: 2, minWidth: 260 }}
+            >
+              <MenuItem value="uc_delta">Unity Catalog (Delta)</MenuItem>
+              <MenuItem value="lakebase">Lakebase (Postgres)</MenuItem>
+            </TextField>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              {storageType === 'lakebase'
+                ? 'Pick a Lakebase table to build your form from. Existing rows can be viewed and updated after you publish.'
+                : 'Pick a UC table to build your form from. Existing rows can be viewed and updated after you publish.'}
+            </Typography>
+            {storageType === 'lakebase' ? (
+              <LakebaseTableSelector
+                database={targetCatalog}
+                schema={targetSchema}
+                table={targetTable}
+                onDatabaseChange={setTargetCatalog}
+                onSchemaChange={setTargetSchema}
+                onTableChange={setTargetTable}
+                onPreviewLoaded={handlePreviewLoaded}
+                onPreviewCleared={() => {
+                  setTablePreview(null);
+                  setSelectedColumnKeys(new Set());
+                }}
+              />
+            ) : (
+              <UcTableSelector
+                catalog={targetCatalog}
+                schema={targetSchema}
+                table={targetTable}
+                onCatalogChange={setTargetCatalog}
+                onSchemaChange={setTargetSchema}
+                onTableChange={setTargetTable}
+                onPreviewLoaded={handlePreviewLoaded}
+                onPreviewCleared={() => {
+                  setTablePreview(null);
+                  setSelectedColumnKeys(new Set());
+                }}
+              />
+            )}
             {selectableColumns.length > 0 && (
               <Box sx={{ mt: 1 }}>
                 <FormControl fullWidth size="small" sx={{ mb: 2 }}>
@@ -639,7 +677,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                   >
                     {selectableColumns.map((col) => (
                       <MenuItem key={col.key} value={col.key}>
-                        {col.label} ({col.key})
+                        {col.label} ({col.key}){col.required ? ' *' : ''}
                       </MenuItem>
                     ))}
                   </Select>
@@ -662,8 +700,8 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                         />
                       }
                       label={`${col.label} (${col.type ?? 'text'})${
-                        col.key === recordKeyColumn ? ' — record key' : ''
-                      }`}
+                        col.required ? ' *' : ''
+                      }${col.key === recordKeyColumn ? ' — record key' : ''}`}
                     />
                   ))}
                 </Box>

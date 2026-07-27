@@ -73,6 +73,17 @@ Open the app → **Settings**:
 - `Lakebase configured: yes`
 - `Lakebase database` shows your Postgres database name
 
+### 5. Link Lakebase Data API (optional)
+
+If you use the Lakebase **Data API** (REST) for external integrations:
+
+1. In your Lakebase project, open **Data API** and click **Enable Data API** if needed.
+2. Copy the **API URL** from the **API** tab.
+3. In the app, open **Settings** (app admin only) → **Lakebase Data API**.
+4. Paste the URL and click **Save**.
+
+Runtime values on Settings show `Lakebase Data API linked: yes` and the saved URL. Record storage still uses the Postgres connection above; the saved URL is for future HTTP-based access.
+
 ## Manual `ENDPOINT_NAME` (optional)
 
 If not using `valueFrom: database`, copy the resource name from Lakebase → your branch → **Computes** → **primary** → **Get ID** → **Copy resource name**, then set in `app.yaml`:
