@@ -66,7 +66,10 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
   );
   const recordsEnabled = project.status === 'published';
   const isStagedSync =
-    project.storage_type === 'uc_delta' && project.record_sync_mode === 'staged';
+    (project.storage_type === 'uc_delta' || project.storage_type === 'lakebase') &&
+    project.record_sync_mode === 'staged';
+  const syncTargetLabel = project.storage_type === 'lakebase' ? 'Lakebase' : 'Unity Catalog';
+  const syncTargetShort = project.storage_type === 'lakebase' ? 'Lakebase' : 'UC';
   const pendingChanges = project.staged_change_count ?? 0;
   const {
     data: records = [],
@@ -168,12 +171,17 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
           }
           return current;
         });
+        if (isStagedSync) {
+          setImportMessage(
+            `Delete saved locally. Click Sync to ${syncTargetShort} on this tab to remove it from ${syncTargetLabel}.`,
+          );
+        }
         await refreshAll();
       } finally {
         setDeleting(false);
       }
     },
-    [project.project_id, refreshAll],
+    [project.project_id, refreshAll, isStagedSync, syncTargetLabel, syncTargetShort],
   );
 
   const columns = useMemo(
@@ -205,18 +213,28 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
     await api.exportRecords(project.project_id, `${project.slug}_records.csv`);
   };
 
-  const syncToUc = async () => {
-    if (!window.confirm(`Apply ${pendingChanges} staged change(s) to Unity Catalog?`)) return;
+  const syncStaged = async () => {
+    if (!window.confirm(`Apply ${pendingChanges} staged change(s) to ${syncTargetLabel}?`)) return;
     setSyncing(true);
     setImportMessage(null);
     try {
       const result = await api.syncRecordsToUc(project.project_id);
-      setImportMessage(
-        `Synced ${result.synced} change${result.synced === 1 ? '' : 's'} to Unity Catalog (${result.inserted} inserted, ${result.updated} updated, ${result.deleted} deleted).`,
-      );
+      const skippedSuffix =
+        result.skipped && result.skipped > 0
+          ? ` ${result.skipped} skipped (duplicate record ids with retain mode).`
+          : '';
+      if (result.synced === 0) {
+        setImportMessage(
+          `No changes were applied to ${syncTargetLabel}.${skippedSuffix} Check for validation errors or duplicate ids.`,
+        );
+      } else {
+        setImportMessage(
+          `Synced ${result.synced} change${result.synced === 1 ? '' : 's'} to ${syncTargetLabel} (${result.inserted} inserted, ${result.updated} updated, ${result.deleted} deleted).${skippedSuffix}`,
+        );
+      }
       await refreshAll();
     } catch (err) {
-      setImportMessage(err instanceof Error ? err.message : 'Sync to Unity Catalog failed');
+      setImportMessage(err instanceof Error ? err.message : `Sync to ${syncTargetLabel} failed`);
     } finally {
       setSyncing(false);
     }
@@ -237,6 +255,11 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
       setDrawerOpen(false);
       setFieldErrors({});
       setAuditLog([]);
+      if (isStagedSync) {
+        setImportMessage(
+          `Change saved locally. Click Sync to ${syncTargetShort} on this tab to write it to ${syncTargetLabel}.`,
+        );
+      }
       await refreshAll();
     } catch (err) {
       if (err instanceof ApiValidationError) {
@@ -296,12 +319,13 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
               variant="contained"
               color="secondary"
               size="small"
-              onClick={() => void syncToUc()}
+              onClick={() => void syncStaged()}
               busy={syncing}
               busyLabel="Syncing…"
               disabled={pendingChanges === 0}
             >
-              Sync to UC{pendingChanges > 0 ? ` (${pendingChanges})` : ''}
+              Sync to {syncTargetShort}
+              {pendingChanges > 0 ? ` (${pendingChanges})` : ''}
             </BusyButton>
           )}
           {canEdit && (
@@ -324,7 +348,8 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
 
       {isStagedSync && (
         <Alert severity="info">
-          Changes are staged locally and are not written to Unity Catalog until you click Sync to UC.
+          Changes are staged locally and are not written to {syncTargetLabel} until you click Sync
+          to {syncTargetShort}.
           {pendingChanges > 0
             ? ` ${pendingChanges} pending change${pendingChanges === 1 ? '' : 's'}.`
             : ' No pending changes.'}
