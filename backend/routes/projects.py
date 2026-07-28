@@ -14,7 +14,7 @@ from backend.csv_util import (
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
-from backend.validation import build_lookup_allowed, validate_record_values
+from backend.validation import build_lookup_allowed, build_lookup_rows_by_id, validate_record_values
 from backend.timing import track_request
 from backend.models import (
     AddMemberRequest,
@@ -506,7 +506,13 @@ def publish_project(project_id: str, request: Request, background_tasks: Backgro
 
 def _validate_record_values(project_id: str, fields, values: dict) -> None:
     lookup_allowed = build_lookup_allowed(fields, project_id)
-    errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
+    rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
+    errors = validate_record_values(
+        fields,
+        values,
+        lookup_allowed=lookup_allowed,
+        rows_by_lookup_id=rows_by_lookup_id,
+    )
     if errors:
         raise HTTPException(status_code=422, detail={"field_errors": errors})
 
@@ -572,10 +578,12 @@ def create_record(project_id: str, body: CreateRecordRequest, request: Request, 
             )
             timer.mark("load_fields_ms")
             lookup_allowed = build_lookup_allowed(fields, project_id)
+            rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
             errors = validate_record_values(
                 fields,
                 body.values,
                 lookup_allowed=lookup_allowed,
+                rows_by_lookup_id=rows_by_lookup_id,
             )
             timer.mark("validate_ms")
             if errors:
@@ -796,6 +804,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
             )
 
         lookup_allowed = build_lookup_allowed(fields, project_id)
+        rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
         failed: list[ImportRecordError] = []
         valid_rows: list[tuple[int, dict[str, Any]]] = []
         record_key_col = project.get("record_key_column")
@@ -804,6 +813,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
                 fields,
                 values,
                 lookup_allowed=lookup_allowed,
+                rows_by_lookup_id=rows_by_lookup_id,
                 lenient_select_fields=lenient_select_fields,
             )
             if errors:

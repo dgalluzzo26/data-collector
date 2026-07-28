@@ -32,6 +32,12 @@ function withCurrentOption(options: string[], current: string): string[] {
   return [current, ...options];
 }
 
+function formatPreviewValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 export default function BindLookupDialog({ open, project, onClose, onBound }: BindLookupDialogProps) {
   const [name, setName] = useState('');
   const [catalog, setCatalog] = useState('');
@@ -147,8 +153,7 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
       setRowCount(previewResult.row_count);
       setSampleRows(previewResult.sample_rows);
       if (!name.trim()) {
-        const defaultName = previewResult.columns[0]?.label || table.trim().replace(/_/g, ' ');
-        setName(defaultName);
+        setName(table.trim());
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Preview failed');
@@ -181,10 +186,6 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
 
   const schemaOptions = withCurrentOption(schemas, schema);
   const tableOptions = withCurrentOption(tables, table);
-  const nameOptions = withCurrentOption(
-    columns.map((col) => col.label),
-    name,
-  );
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
@@ -231,8 +232,9 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
               label="Table"
               value={table}
               onChange={(e) => {
-                setTable(e.target.value);
                 clearPreview();
+                setTable(e.target.value);
+                setName(e.target.value);
               }}
             >
               {tableOptions.map((option) => (
@@ -262,48 +264,46 @@ export default function BindLookupDialog({ open, project, onClose, onBound }: Bi
         {columns.length > 0 && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>
-              Columns
+              Five rows previewed; full table will be used in forms.
             </Typography>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Key</TableCell>
-                  <TableCell>Label</TableCell>
-                  <TableCell>Type</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {columns.map((col) => (
-                  <TableRow key={col.key}>
-                    <TableCell>{col.key}</TableCell>
-                    <TableCell>{col.label}</TableCell>
-                    <TableCell>{col.type ?? 'text'}</TableCell>
+            <Box sx={{ overflowX: 'auto' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    {columns.map((column) => (
+                      <TableCell key={column.key}>{column.label || column.key}</TableCell>
+                    ))}
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {sampleRows.length > 0 && (
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                Sample loaded — full table will be used in forms.
-              </Typography>
-            )}
+                </TableHead>
+                <TableBody>
+                  {sampleRows.map((row, rowIndex) => (
+                    <TableRow key={rowIndex}>
+                      {columns.map((column) => (
+                        <TableCell key={column.key}>
+                          {formatPreviewValue(row[column.key])}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                  {sampleRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={columns.length}>No rows to preview.</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </Box>
           </Box>
         )}
-        <FormControl fullWidth size="small" disabled={columns.length === 0} sx={{ mt: 1 }}>
-          <InputLabel id="bind-lookup-name-label">Lookup name</InputLabel>
-          <Select
-            labelId="bind-lookup-name-label"
-            label="Lookup name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          >
-            {nameOptions.map((option) => (
-              <MenuItem key={option} value={option}>
-                {option}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <TextField
+          fullWidth
+          size="small"
+          label="Lookup table name"
+          value={name}
+          disabled={!table.trim()}
+          onChange={(e) => setName(e.target.value)}
+          sx={{ mt: 1 }}
+        />
         {error && (
           <Typography variant="body2" color="error" sx={{ mt: 2 }}>
             {error}
