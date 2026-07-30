@@ -212,12 +212,19 @@ export interface RecordCsvPreview {
   header_row: number;
 }
 
+export interface SyncStagedRecordFailure {
+  record_id: string;
+  error: string;
+}
+
 export interface SyncStagedRecordsResult {
   synced: number;
   inserted: number;
   updated: number;
   deleted: number;
   skipped?: number;
+  failed?: number;
+  failures?: SyncStagedRecordFailure[];
 }
 
 export interface CreateProjectPayload {
@@ -279,6 +286,7 @@ export interface AppConfig {
   is_app_admin?: boolean;
   runtime: string;
   lakebase_configured?: boolean;
+  lakebase_project?: string | null;
   lakebase_database?: string | null;
   lakebase_default_schema?: string;
   lakebase_data_api_linked?: boolean;

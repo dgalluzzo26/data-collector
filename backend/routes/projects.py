@@ -14,7 +14,12 @@ from backend.csv_util import (
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
-from backend.validation import build_lookup_allowed, build_lookup_rows_by_id, validate_record_values
+from backend.validation import (
+    build_lookup_allowed,
+    build_lookup_rows_by_id,
+    normalize_import_values,
+    validate_record_values,
+)
 from backend.timing import track_request
 from backend.models import (
     AddMemberRequest,
@@ -809,6 +814,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
         valid_rows: list[tuple[int, dict[str, Any]]] = []
         record_key_col = project.get("record_key_column")
         for row_num, values in enumerate(parsed, start=body.header_row + 1):
+            values = normalize_import_values(fields, values)
             errors = validate_record_values(
                 fields,
                 values,

@@ -76,6 +76,11 @@ def _column_map(project: dict[str, Any]) -> dict[str, str]:
     return {str(r["column_name"]).lower(): str(r["column_name"]) for r in rows}
 
 
+def column_map(project: dict[str, Any]) -> dict[str, str]:
+    """Public column lookup so batch callers can resolve names once."""
+    return _column_map(project)
+
+
 def _resolve(columns: dict[str, str], name: Optional[str]) -> Optional[str]:
     if not name:
         return None
@@ -265,8 +270,10 @@ def get_record(
     project: dict[str, Any],
     fields: list[FieldDefinition],
     record_id: str,
+    *,
+    columns: Optional[dict[str, str]] = None,
 ) -> Optional[dict[str, Any]]:
-    columns = _column_map(project)
+    columns = _column_map(project) if columns is None else columns
     id_col = _id_column(project, columns)
     if not id_col:
         return None
@@ -282,8 +289,13 @@ def get_record(
     return _row_to_record(row, fields, columns, id_col)
 
 
-def record_exists(project: dict[str, Any], record_id: str) -> bool:
-    columns = _column_map(project)
+def record_exists(
+    project: dict[str, Any],
+    record_id: str,
+    *,
+    columns: Optional[dict[str, str]] = None,
+) -> bool:
+    columns = _column_map(project) if columns is None else columns
     id_col = _id_column(project, columns)
     if not id_col:
         return False
@@ -295,6 +307,101 @@ def record_exists(project: dict[str, Any], record_id: str) -> bool:
     return row is not None
 
 
+def existing_record_ids(
+    project: dict[str, Any],
+    record_ids: list[str],
+    *,
+    columns: Optional[dict[str, str]] = None,
+) -> set[str]:
+    """Which of `record_ids` already exist, resolved in a single round trip."""
+    if not record_ids:
+        return set()
+    columns = _column_map(project) if columns is None else columns
+    id_col = _id_column(project, columns)
+    if not id_col:
+        return set()
+    rows = pg_util.fetchall(
+        f"SELECT {_quote_ident(id_col)}::text AS existing_id FROM {table_ref(project)} "
+        f"WHERE {_quote_ident(id_col)}::text = ANY(%s)",
+        (list({str(rid) for rid in record_ids}),),
+    )
+    return {str(r["existing_id"]) for r in rows}
+
+
+def _insert_spec(
+    fields: list[FieldDefinition], columns: dict[str, str]
+) -> list[tuple[str, str]]:
+    """(logical name, actual column) pairs written by an insert, in column order."""
+    spec: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(logical: str, actual: Optional[str]) -> None:
+        if actual and actual not in seen:
+            spec.append((logical, actual))
+            seen.add(actual)
+
+    # Managed tables declare _record_id NOT NULL, so populate it even when a
+    # record key column supplies the identity.
+    add("_record_id", _resolve(columns, "_record_id"))
+    for name in ("_created_at", "_created_by", "_updated_at", "_updated_by"):
+        add(name, _resolve(columns, name))
+    for field in fields:
+        add(field.field_key, _resolve(columns, field.field_key))
+    return spec
+
+
+def _insert_params(
+    spec: list[tuple[str, str]],
+    record_id: str,
+    values: dict[str, Any],
+    user_email: str,
+    now: datetime,
+) -> list[Any]:
+    params: list[Any] = []
+    for logical, _actual in spec:
+        if logical == "_record_id":
+            params.append(record_id)
+        elif logical in ("_created_at", "_updated_at"):
+            params.append(now)
+        elif logical in ("_created_by", "_updated_by"):
+            params.append(user_email)
+        else:
+            params.append(_encode(values.get(logical)))
+    return params
+
+
+def insert_records_batch(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    entries: list[tuple[str, dict[str, Any]]],
+    user_email: str,
+    *,
+    columns: Optional[dict[str, str]] = None,
+) -> None:
+    """Insert `(record_id, values)` pairs with one multi-row statement.
+
+    Skips the per-row duplicate check; callers must resolve conflicts first.
+    """
+    if not entries:
+        return
+    columns = _column_map(project) if columns is None else columns
+    spec = _insert_spec(fields, columns)
+    if not spec:
+        raise ValueError("No writable columns found on the Lakebase table")
+
+    now = _now()
+    col_sql = ", ".join(_quote_ident(actual) for _, actual in spec)
+    row_sql = "(" + ", ".join("%s" for _ in spec) + ")"
+    params: list[Any] = []
+    for record_id, values in entries:
+        params.extend(_insert_params(spec, record_id, values, user_email, now))
+    pg_util.execute(
+        f"INSERT INTO {table_ref(project)} ({col_sql}) "
+        f"VALUES {', '.join(row_sql for _ in entries)}",
+        params,
+    )
+
+
 def create_record(
     project: dict[str, Any],
     fields: list[FieldDefinition],
@@ -302,8 +409,9 @@ def create_record(
     user_email: str,
     *,
     record_id: Optional[str] = None,
+    columns: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
-    columns = _column_map(project)
+    columns = _column_map(project) if columns is None else columns
     key_col = _record_key_column(project)
     now = _now()
 
@@ -312,10 +420,12 @@ def create_record(
         if key_value is None or (isinstance(key_value, str) and not key_value.strip()):
             raise ValueError(f"{key_col} is required")
         record_id = str(key_value)
-        if get_record(project, fields, record_id):
+        if get_record(project, fields, record_id, columns=columns):
             if _duplicate_key_mode(project) == "overwrite":
-                update_record(project, fields, record_id, values, user_email)
-                updated = get_record(project, fields, record_id)
+                update_record(
+                    project, fields, record_id, values, user_email, columns=columns
+                )
+                updated = get_record(project, fields, record_id, columns=columns)
                 if updated:
                     return updated
             else:
@@ -323,39 +433,15 @@ def create_record(
     elif not record_id:
         record_id = str(uuid.uuid4())
 
-    cols: list[str] = []
-    vals: list[Any] = []
-
-    record_id_col = _resolve(columns, "_record_id")
-    if record_id_col and not key_col:
-        cols.append(record_id_col)
-        vals.append(record_id)
-
-    for name, value in (
-        ("_created_at", now),
-        ("_created_by", user_email),
-        ("_updated_at", now),
-        ("_updated_by", user_email),
-    ):
-        actual = _resolve(columns, name)
-        if actual:
-            cols.append(actual)
-            vals.append(value)
-
-    for field in fields:
-        actual = _resolve(columns, field.field_key)
-        if actual and actual not in cols:
-            cols.append(actual)
-            vals.append(_encode(values.get(field.field_key)))
-
-    if not cols:
+    spec = _insert_spec(fields, columns)
+    if not spec:
         raise ValueError("No writable columns found on the Lakebase table")
 
-    placeholders = ", ".join("%s" for _ in cols)
-    col_sql = ", ".join(_quote_ident(c) for c in cols)
+    col_sql = ", ".join(_quote_ident(actual) for _, actual in spec)
+    placeholders = ", ".join("%s" for _ in spec)
     pg_util.execute(
         f"INSERT INTO {table_ref(project)} ({col_sql}) VALUES ({placeholders})",
-        vals,
+        _insert_params(spec, record_id, values, user_email, now),
     )
     return {
         "record_id": record_id,
@@ -373,8 +459,10 @@ def update_record(
     record_id: str,
     values: dict[str, Any],
     user_email: str,
+    *,
+    columns: Optional[dict[str, str]] = None,
 ) -> None:
-    columns = _column_map(project)
+    columns = _column_map(project) if columns is None else columns
     id_col = _id_column(project, columns)
     if not id_col:
         raise ValueError("This Lakebase table has no record key column configured")
@@ -412,8 +500,13 @@ def update_record(
     )
 
 
-def delete_record(project: dict[str, Any], record_id: str) -> bool:
-    columns = _column_map(project)
+def delete_record(
+    project: dict[str, Any],
+    record_id: str,
+    *,
+    columns: Optional[dict[str, str]] = None,
+) -> bool:
+    columns = _column_map(project) if columns is None else columns
     id_col = _id_column(project, columns)
     if not id_col:
         return False

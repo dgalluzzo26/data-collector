@@ -67,6 +67,19 @@ def delete_staged(project_id: str, record_id: str) -> None:
     )
 
 
+def delete_staged_batch(project_id: str, record_ids: list[str]) -> None:
+    """Delete many staged rows at once; the warehouse round trip dominates per-row cost."""
+    chunk_size = 500
+    for start in range(0, len(record_ids), chunk_size):
+        chunk = record_ids[start : start + chunk_size]
+        placeholders = ", ".join("?" for _ in chunk)
+        execute(
+            f"DELETE FROM {_table('staged_record_changes')} "
+            f"WHERE project_id = ? AND record_id IN ({placeholders})",
+            (project_id, *chunk),
+        )
+
+
 def _parse_values(values_json: Optional[str]) -> dict[str, Any]:
     if not values_json:
         return {}

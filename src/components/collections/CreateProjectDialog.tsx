@@ -27,7 +27,17 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import { canStageCsvInBrowser, CSV_MAX_SIZE_HELP, csvFileSizeError, formatCsvSize, readCsvFile, stageCsvForImport } from '../../lib/csvFile';
+import { canStageCsvInBrowser, CSV_MAX_SIZE_HELP, formatCsvSize, stageCsvForImport } from '../../lib/csvFile';
+import {
+  baseNameFromSpreadsheetFile,
+  detectSpreadsheetKind,
+  listXlsxSheetNames,
+  readSpreadsheetAsCsv,
+  SPREADSHEET_ACCEPT,
+  spreadsheetFileSizeError,
+  type SpreadsheetKind,
+  xlsxSheetToCsv,
+} from '../../lib/spreadsheetFile';
 import type {
   CsvFormPreview,
   DuplicateKeyMode,
@@ -75,7 +85,7 @@ function DuplicateKeyModeField({
         />
       </RadioGroup>
       <FormHelperText>
-        Applies when importing CSV data or creating records with an existing primary key.
+        Applies when importing spreadsheet data or creating records with an existing primary key.
       </FormHelperText>
     </FormControl>
   );
@@ -161,6 +171,7 @@ function StorageFields({
   setTargetTable,
   defaultCatalog,
   defaultSchema,
+  lakebaseProject,
   name,
   slugTableName,
 }: {
@@ -176,9 +187,17 @@ function StorageFields({
   setTargetTable: (v: string) => void;
   defaultCatalog: string;
   defaultSchema: string;
+  lakebaseProject: string;
   name: string;
   slugTableName: (value: string) => string;
 }) {
+  const isLakebase = storageType === 'lakebase';
+  const resolvedDatabase = (targetCatalog || defaultCatalog || '').trim();
+  const resolvedSchema = (targetSchema || defaultSchema || '').trim();
+  const resolvedTable =
+    targetTable.trim() || (name.trim() ? `${slugTableName(name)}_data` : '(auto from name)');
+  const lakebaseLocation = [resolvedDatabase || '…', resolvedSchema || '…', resolvedTable].join('.');
+
   return (
     <>
       <TextField
@@ -190,18 +209,62 @@ function StorageFields({
         <MenuItem value="uc_delta">Unity Catalog (Delta)</MenuItem>
         <MenuItem value="lakebase">Lakebase (Postgres)</MenuItem>
       </TextField>
+      {isLakebase && (
+        <Alert severity="info" sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ mb: 0.5 }}>
+            Project records upload to this Lakebase location:
+          </Typography>
+          <Box
+            component="code"
+            sx={{
+              display: 'block',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              fontSize: '0.9rem',
+              wordBreak: 'break-all',
+              mb: 1,
+            }}
+          >
+            {lakebaseLocation}
+          </Box>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 1.5,
+              rowGap: 0.25,
+            }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              Project
+            </Typography>
+            <Typography variant="body2">{lakebaseProject || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Database
+            </Typography>
+            <Typography variant="body2">{resolvedDatabase || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Schema
+            </Typography>
+            <Typography variant="body2">{resolvedSchema || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Table
+            </Typography>
+            <Typography variant="body2">{resolvedTable}</Typography>
+          </Box>
+        </Alert>
+      )}
       <Button size="small" onClick={() => setShowStorage((v) => !v)} sx={{ alignSelf: 'flex-start' }}>
         {showStorage ? 'Hide storage location' : 'Customize storage location'}
       </Button>
       <Collapse in={showStorage}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Typography variant="body2" color="text.secondary">
-            {storageType === 'lakebase'
+            {isLakebase
               ? `Records are stored in Lakebase Postgres. Defaults: ${defaultCatalog}.${defaultSchema}`
               : `Records are saved outside the app metadata schema. Defaults: ${defaultCatalog}.${defaultSchema}`}
           </Typography>
           <TextField
-            label={storageType === 'lakebase' ? 'Database' : 'Catalog'}
+            label={isLakebase ? 'Database' : 'Catalog'}
             value={targetCatalog}
             onChange={(e) => {
               setTargetCatalog(e.target.value);
@@ -210,8 +273,8 @@ function StorageFields({
               }
             }}
             size="small"
-            disabled={storageType === 'lakebase'}
-            helperText={storageType === 'lakebase' ? 'From Lakebase app resource (PGDATABASE)' : undefined}
+            disabled={isLakebase}
+            helperText={isLakebase ? 'From Lakebase app resource (PGDATABASE)' : undefined}
           />
           <StorageSchemaSelect
             storageType={storageType}
@@ -219,7 +282,7 @@ function StorageFields({
             value={targetSchema}
             onChange={setTargetSchema}
             helperText={
-              storageType === 'lakebase'
+              isLakebase
                 ? undefined
                 : `Default for new forms: ${defaultSchema || '…'}`
             }
@@ -231,7 +294,7 @@ function StorageFields({
             placeholder={name.trim() ? `${slugTableName(name)}_data` : 'auto from name'}
             size="small"
             helperText={
-              storageType === 'lakebase'
+              isLakebase
                 ? 'Postgres table created on publish'
                 : 'Delta table created on publish'
             }
@@ -256,11 +319,16 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
   const [targetTable, setTargetTable] = useState('');
   const [defaultCatalog, setDefaultCatalog] = useState('');
   const [defaultSchema, setDefaultSchema] = useState('');
+  const [lakebaseProject, setLakebaseProject] = useState('');
   const [tablePreview, setTablePreview] = useState<UcTablePreview | null>(null);
   const [csvPreview, setCsvPreview] = useState<CsvFormPreview | null>(null);
   const [csvColumns, setCsvColumns] = useState<InferredColumn[]>([]);
   const [csvText, setCsvText] = useState('');
   const [headerRow, setHeaderRow] = useState(1);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [spreadsheetKind, setSpreadsheetKind] = useState<SpreadsheetKind | null>(null);
+  const [xlsxSheetNames, setXlsxSheetNames] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState('');
   const [csvPreviewLoading, setCsvPreviewLoading] = useState(false);
   const [importRowsAfterPublish, setImportRowsAfterPublish] = useState(false);
   const [selectedColumnKeys, setSelectedColumnKeys] = useState<Set<string>>(new Set());
@@ -288,6 +356,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     void api.getConfig().then((cfg) => {
       setDefaultCatalog(cfg.default_data_catalog);
       setDefaultSchema(cfg.default_data_schema);
+      setLakebaseProject(cfg.lakebase_project ?? '');
       if (storageType === 'lakebase' && cfg.lakebase_configured) {
         setTargetCatalog(cfg.lakebase_database ?? '');
         setTargetSchema(cfg.lakebase_default_schema ?? cfg.default_data_schema);
@@ -310,6 +379,10 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     setCsvColumns([]);
     setCsvText('');
     setHeaderRow(1);
+    setUploadedFile(null);
+    setSpreadsheetKind(null);
+    setXlsxSheetNames([]);
+    setSelectedSheet('');
     lastAnalyzedHeaderRowRef.current = 1;
     setCsvPreviewLoading(false);
     setImportRowsAfterPublish(false);
@@ -373,27 +446,45 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     } catch (err) {
       setCsvPreview(null);
       setCsvColumns([]);
-      setError(err instanceof Error ? err.message : 'Failed to analyze CSV');
+      setError(err instanceof Error ? err.message : 'Failed to analyze spreadsheet');
     } finally {
       setCsvPreviewLoading(false);
     }
   };
 
-  const handleCsvFileSelect = async (file: File) => {
+  const handleSpreadsheetFileSelect = async (file: File) => {
     setError(null);
-    const sizeError = csvFileSizeError(file);
+    const sizeError = spreadsheetFileSizeError(file);
     if (sizeError) {
       setCsvPreview(null);
       setCsvColumns([]);
       setCsvText('');
+      setUploadedFile(null);
+      setSpreadsheetKind(null);
+      setXlsxSheetNames([]);
+      setSelectedSheet('');
       setError(sizeError);
       return;
     }
     try {
-      const csv = await readCsvFile(file);
+      const kind = detectSpreadsheetKind(file);
+      setUploadedFile(file);
+      setSpreadsheetKind(kind);
+      let csv: string;
+      if (kind === 'xlsx') {
+        const sheets = await listXlsxSheetNames(file);
+        const sheet = sheets[0];
+        setXlsxSheetNames(sheets);
+        setSelectedSheet(sheet);
+        csv = await xlsxSheetToCsv(file, sheet);
+      } else {
+        setXlsxSheetNames([]);
+        setSelectedSheet('');
+        csv = await readSpreadsheetAsCsv(file);
+      }
       setCsvText(csv);
       if (!name.trim()) {
-        const baseName = file.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').trim();
+        const baseName = baseNameFromSpreadsheetFile(file.name);
         if (baseName) setName(baseName);
       }
       await analyzeCsv(csv, headerRow, { selectAll: true });
@@ -401,9 +492,32 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
       setCsvPreview(null);
       setCsvColumns([]);
       setCsvText('');
-      setError(err instanceof Error ? err.message : 'Failed to read CSV file');
+      setUploadedFile(null);
+      setSpreadsheetKind(null);
+      setXlsxSheetNames([]);
+      setSelectedSheet('');
+      setError(err instanceof Error ? err.message : 'Failed to read spreadsheet file');
     } finally {
       if (csvFileRef.current) csvFileRef.current.value = '';
+    }
+  };
+
+  const handleSheetChange = async (sheet: string) => {
+    if (!uploadedFile || spreadsheetKind !== 'xlsx') return;
+    setSelectedSheet(sheet);
+    setCsvPreviewLoading(true);
+    setError(null);
+    try {
+      const csv = await xlsxSheetToCsv(uploadedFile, sheet);
+      setCsvText(csv);
+      await analyzeCsv(csv, headerRow, { selectAll: true });
+    } catch (err) {
+      setCsvPreview(null);
+      setCsvColumns([]);
+      setCsvText('');
+      setError(err instanceof Error ? err.message : 'Failed to read worksheet');
+    } finally {
+      setCsvPreviewLoading(false);
     }
   };
 
@@ -453,7 +567,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
     }
     if (creationMode === 'import_csv') {
       if (!csvPreview || csvColumns.length === 0) {
-        setError('Upload a CSV file to infer form fields.');
+        setError('Upload a spreadsheet file to infer form fields.');
         return;
       }
       if (
@@ -587,6 +701,10 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               setCsvColumns([]);
               setCsvText('');
               setHeaderRow(1);
+              setUploadedFile(null);
+              setSpreadsheetKind(null);
+              setXlsxSheetNames([]);
+              setSelectedSheet('');
               setSelectedColumnKeys(new Set());
               setRecordKeyColumn('');
               setError(null);
@@ -606,7 +724,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                   : 'Use an existing Unity Catalog table'
               }
             />
-            <FormControlLabel value="import_csv" control={<Radio />} label="Import from CSV" />
+            <FormControlLabel value="import_csv" control={<Radio />} label="Import from spreadsheet" />
           </RadioGroup>
         </Box>
 
@@ -711,9 +829,28 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
           </Box>
         ) : creationMode === 'import_csv' ? (
           <Box>
+            <FormControlLabel
+              sx={{ mb: 1 }}
+              control={
+                <Checkbox
+                  checked={importRowsAfterPublish}
+                  onChange={(e) => setImportRowsAfterPublish(e.target.checked)}
+                  disabled={!csvPreview || csvPreview.row_count === 0 || !csvCanStageInBrowser}
+                />
+              }
+              label="Import spreadsheet rows after I publish"
+            />
+            {csvPreview && csvText.length > 0 && !csvCanStageInBrowser && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                This file is {formatCsvSize(csvText.length)} — too large to auto-import in the browser
+                after publish. Create the form, publish it, then use{' '}
+                <strong>Records → Import spreadsheet</strong>{' '}
+                for the full file.
+              </Alert>
+            )}
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Upload a CSV to infer form fields from column headers and sample values. Review the
-              schema before creating the collection. {CSV_MAX_SIZE_HELP}
+              Upload a CSV or Excel (.xlsx) file to infer form fields from column headers and sample
+              values. Review the schema before creating the collection. {CSV_MAX_SIZE_HELP}
             </Typography>
             {error && creationMode === 'import_csv' && (
               <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -737,14 +874,32 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                 helperText="Row number where column names appear (row 1 is the first line)"
                 sx={{ width: 160 }}
               />
+              {spreadsheetKind === 'xlsx' && xlsxSheetNames.length > 0 && (
+                <FormControl size="small" sx={{ minWidth: 200 }}>
+                  <InputLabel id="xlsx-sheet-label">Sheet</InputLabel>
+                  <Select
+                    labelId="xlsx-sheet-label"
+                    label="Sheet"
+                    value={selectedSheet}
+                    onChange={(e) => void handleSheetChange(e.target.value)}
+                    disabled={csvPreviewLoading}
+                  >
+                    {xlsxSheetNames.map((sheet) => (
+                      <MenuItem key={sheet} value={sheet}>
+                        {sheet}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
               <input
               ref={csvFileRef}
               type="file"
-              accept=".csv"
+              accept={SPREADSHEET_ACCEPT}
               hidden
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) void handleCsvFileSelect(file);
+                if (file) void handleSpreadsheetFileSelect(file);
               }}
             />
             <Button
@@ -753,7 +908,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               onClick={() => csvFileRef.current?.click()}
               disabled={csvPreviewLoading}
             >
-              {csvPreviewLoading ? 'Analyzing CSV…' : 'Choose CSV file'}
+              {csvPreviewLoading ? 'Analyzing…' : 'Choose spreadsheet file'}
             </Button>
             {csvText.trim().length > 0 && (
               <Button
@@ -885,24 +1040,6 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
                     </Table>
                   </Box>
                 )}
-                <FormControlLabel
-                  sx={{ mt: 2 }}
-                  control={
-                    <Checkbox
-                      checked={importRowsAfterPublish}
-                      onChange={(e) => setImportRowsAfterPublish(e.target.checked)}
-                      disabled={!csvPreview || csvPreview.row_count === 0 || !csvCanStageInBrowser}
-                    />
-                  }
-                  label="Import CSV rows after I publish"
-                />
-                {csvPreview && csvText.length > 0 && !csvCanStageInBrowser && (
-                  <Alert severity="info" sx={{ mt: 1 }}>
-                    This file is {formatCsvSize(csvText.length)} — too large to auto-import in the browser
-                    after publish. Create the form, publish it, then use <strong>Records → Import CSV</strong>{' '}
-                    for the full file.
-                  </Alert>
-                )}
               </Box>
             )}
             <StorageFields
@@ -918,6 +1055,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
               setTargetTable={setTargetTable}
               defaultCatalog={defaultCatalog}
               defaultSchema={defaultSchema}
+              lakebaseProject={lakebaseProject}
               name={name}
               slugTableName={slugTableName}
             />
@@ -936,6 +1074,7 @@ export default function CreateProjectDialog({ open, onClose, onCreated }: Create
             setTargetTable={setTargetTable}
             defaultCatalog={defaultCatalog}
             defaultSchema={defaultSchema}
+            lakebaseProject={lakebaseProject}
             name={name}
             slugTableName={slugTableName}
           />

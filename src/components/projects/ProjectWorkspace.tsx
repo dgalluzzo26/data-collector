@@ -14,7 +14,7 @@ import { api, ApiPublishError } from '../../api/client';
 import { useProject } from '../../hooks/useProjects';
 import { clearStagedCsvImport, getStagedCsvImport } from '../../lib/csvFile';
 import { designerBaseline, draftFieldsOnly, publishedFields as selectPublishedFields } from '../../lib/designerFields';
-import { formatImportResult } from '../../lib/importRecords';
+import { formatImportResult, stagedImportNote } from '../../lib/importRecords';
 import { showGenieTab } from '../../lib/genie';
 import type { FieldDefinition } from '../../types';
 import BusyButton from '../common/BusyButton';
@@ -221,8 +221,13 @@ export default function ProjectWorkspace() {
           } else {
             publishText = `Published to ${storageLabel} and ${formatImportResult(result, fieldLabels).replace(/^\w/, (c) => c.toLowerCase())}`;
           }
+          if (project.record_sync_mode === 'staged') {
+            const syncTargetLabel =
+              project.storage_type === 'lakebase' ? 'Lakebase' : 'Unity Catalog';
+            publishText = `${publishText}\n${stagedImportNote(syncTargetLabel)}`;
+          }
         } catch (importErr) {
-          publishText = `Published to ${storageLabel}, but CSV import failed: ${
+          publishText = `Published to ${storageLabel}, but the spreadsheet import failed: ${
             importErr instanceof Error ? importErr.message : 'unknown error'
           }`;
           publishSeverity = 'warning';
@@ -323,7 +328,7 @@ export default function ProjectWorkspace() {
 
       {project.status === 'draft' && projectId && getStagedCsvImport(projectId) && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          CSV rows are queued and will import automatically when you publish.
+          Spreadsheet rows are queued and will import automatically when you publish.
         </Alert>
       )}
 
