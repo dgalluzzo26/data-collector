@@ -143,8 +143,8 @@ function UsingHelp() {
               Click <strong>New record</strong> or a row to add or edit data in the side panel.
             </>,
             <>
-              Use <strong>Import CSV</strong> / <strong>Export CSV</strong> for bulk work (editors
-              and admins).
+              Use <strong>Import spreadsheet</strong> (Records or Settings) and{' '}
+              <strong>Export CSV</strong> for bulk work (editors and admins).
             </>,
             <>
               Click the <strong>refresh</strong> icon to load the latest data when others are

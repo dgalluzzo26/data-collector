@@ -26,6 +26,14 @@ export function formatImportFailureDetail(
   return lines.join('\n') + suffix;
 }
 
+/**
+ * Note appended when the collection stages changes instead of writing them
+ * straight through, so imported rows aren't mistaken for committed data.
+ */
+export function stagedImportNote(syncTargetLabel: string): string {
+  return `Rows are staged locally — click Sync to ${syncTargetLabel} on the Records tab to write them to ${syncTargetLabel}.`;
+}
+
 export function formatImportResult(
   result: ImportRecordsResult,
   fieldLabels?: Record<string, string>,

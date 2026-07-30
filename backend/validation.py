@@ -148,7 +148,8 @@ def coerce_value_for_storage(field: FieldDefinition, value: Any) -> Any:
             try:
                 return float(stripped.replace(",", ""))
             except ValueError:
-                return value
+                # Non-numeric text cannot be stored in a typed number column.
+                return None
         if field.field_type == "boolean":
             lower = stripped.lower()
             if lower in ("true", "yes", "1", "y"):
@@ -161,6 +162,38 @@ def coerce_value_for_storage(field: FieldDefinition, value: Any) -> Any:
         return float(value)
 
     return value
+
+
+def normalize_import_values(
+    fields: list[FieldDefinition],
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    """Coerce spreadsheet cells for import before validation.
+
+    For number fields:
+    - blank / empty cells become 0
+    - non-numeric text becomes null (does not fail the row)
+    """
+    normalized = dict(values)
+    for field in fields:
+        if field.field_type != "number":
+            continue
+        raw = normalized.get(field.field_key)
+        if _is_empty(raw):
+            normalized[field.field_key] = 0
+            continue
+        if isinstance(raw, bool):
+            normalized[field.field_key] = None
+            continue
+        if isinstance(raw, (int, float)):
+            normalized[field.field_key] = float(raw)
+            continue
+        text = str(raw).strip().replace(",", "")
+        try:
+            normalized[field.field_key] = float(text)
+        except ValueError:
+            normalized[field.field_key] = None
+    return normalized
 
 
 def _is_valid_url(value: str) -> bool:

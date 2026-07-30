@@ -110,11 +110,23 @@ if [[ "$ENSURE_LAKEBASE" == "true" || "$ENSURE_LAKEBASE" == "1" ]]; then
     PYTHON_BIN=".venv/bin/python"
   fi
   LAKEBASE_ARGS=()
-  if [[ -n "${LAKEBASE_BRANCH:-}" ]]; then
-    LAKEBASE_ARGS+=(--lakebase-branch "$LAKEBASE_BRANCH")
+  # Prefer explicit env overrides; otherwise use databricks.yml lakebase_* defaults.
+  LAKEBASE_BRANCH_VAL="${LAKEBASE_BRANCH:-}"
+  LAKEBASE_DATABASE_VAL="${LAKEBASE_DATABASE:-}"
+  if [[ -z "$LAKEBASE_BRANCH_VAL" || -z "$LAKEBASE_DATABASE_VAL" ]]; then
+    TARGET_JSON_LB="$(python3 scripts/bundle_target.py "$TARGET")"
+    if [[ -z "$LAKEBASE_BRANCH_VAL" ]]; then
+      LAKEBASE_BRANCH_VAL="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('lakebase_branch',''))" <<<"$TARGET_JSON_LB")"
+    fi
+    if [[ -z "$LAKEBASE_DATABASE_VAL" ]]; then
+      LAKEBASE_DATABASE_VAL="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('lakebase_database',''))" <<<"$TARGET_JSON_LB")"
+    fi
   fi
-  if [[ -n "${LAKEBASE_DATABASE:-}" ]]; then
-    LAKEBASE_ARGS+=(--lakebase-database "$LAKEBASE_DATABASE")
+  if [[ -n "$LAKEBASE_BRANCH_VAL" ]]; then
+    LAKEBASE_ARGS+=(--lakebase-branch "$LAKEBASE_BRANCH_VAL")
+  fi
+  if [[ -n "$LAKEBASE_DATABASE_VAL" ]]; then
+    LAKEBASE_ARGS+=(--lakebase-database "$LAKEBASE_DATABASE_VAL")
   fi
   if [[ -n "$PROFILE" ]]; then
     LAKEBASE_ARGS+=(--profile "$PROFILE")

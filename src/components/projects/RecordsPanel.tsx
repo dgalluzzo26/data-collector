@@ -17,7 +17,7 @@ import { useLookupOptions, useLookupRows } from '../../hooks/useLookupOptions';
 import { useInvalidateRecords, useRecords } from '../../hooks/useRecords';
 import { publishedFields as selectPublishedFields } from '../../lib/designerFields';
 import { buildRecordGridColumns } from '../../lib/recordGridColumns';
-import { formatImportResult } from '../../lib/importRecords';
+import { formatImportResult, stagedImportNote } from '../../lib/importRecords';
 import type { ProjectDetail, RecordAuditEntry, RecordRow } from '../../types';
 import { validateRecordValues } from '../../lib/recordValidation';
 import BusyButton from '../common/BusyButton';
@@ -223,13 +223,21 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
         result.skipped && result.skipped > 0
           ? ` ${result.skipped} skipped (duplicate record ids with retain mode).`
           : '';
+      const failedCount = result.failed ?? 0;
+      const failedSuffix = failedCount
+        ? ` ${failedCount} row${failedCount === 1 ? '' : 's'} failed and stayed staged: ${(
+            result.failures ?? []
+          )
+            .map((f) => `${f.record_id} (${f.error})`)
+            .join('; ')}`
+        : '';
       if (result.synced === 0) {
         setImportMessage(
-          `No changes were applied to ${syncTargetLabel}.${skippedSuffix} Check for validation errors or duplicate ids.`,
+          `No changes were applied to ${syncTargetLabel}.${skippedSuffix}${failedSuffix || ' Check for validation errors or duplicate ids.'}`,
         );
       } else {
         setImportMessage(
-          `Synced ${result.synced} change${result.synced === 1 ? '' : 's'} to ${syncTargetLabel} (${result.inserted} inserted, ${result.updated} updated, ${result.deleted} deleted).${skippedSuffix}`,
+          `Synced ${result.synced} change${result.synced === 1 ? '' : 's'} to ${syncTargetLabel} (${result.inserted} inserted, ${result.updated} updated, ${result.deleted} deleted).${skippedSuffix}${failedSuffix}`,
         );
       }
       await refreshAll();
@@ -336,7 +344,7 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
                 startIcon={<UploadIcon />}
                 onClick={() => setImportDialogOpen(true)}
               >
-                Import CSV
+                Import spreadsheet
               </Button>
               <Button variant="contained" size="small" onClick={openNew}>
                 New record
@@ -482,7 +490,10 @@ export default function RecordsPanel({ project, canEdit, onChanged }: RecordsPan
         recordKeyColumn={project.record_key_column}
         onClose={() => setImportDialogOpen(false)}
         onImported={async (result) => {
-          setImportMessage(formatImportResult(result, fieldLabels));
+          const summary = formatImportResult(result, fieldLabels);
+          setImportMessage(
+            isStagedSync ? `${summary}\n${stagedImportNote(syncTargetLabel)}` : summary,
+          );
           await refreshAll();
         }}
       />

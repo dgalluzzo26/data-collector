@@ -33,7 +33,7 @@ const BASE = '/api';
 
 /** Preview/infer endpoints parse the full CSV payload. */
 const CSV_PREVIEW_TIMEOUT_MS = 120_000;
-/** Record/lookup imports may insert thousands of rows server-side. */
+/** Record/lookup imports and staged syncs may write thousands of rows server-side. */
 const CSV_IMPORT_TIMEOUT_MS = 600_000;
 
 export class ApiValidationError extends Error {
@@ -319,7 +319,7 @@ export const api = {
       `/projects/${id}/records/sync-to-uc`,
       { method: 'POST' },
       'Syncing staged records…',
-      120_000,
+      CSV_IMPORT_TIMEOUT_MS,
     ),
   getRecordAudit: (id: string, recordId: string) =>
     request<RecordAuditEntry[]>(

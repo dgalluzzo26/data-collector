@@ -22,14 +22,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lakebase-branch",
         default=os.environ.get(
-            "LAKEBASE_BRANCH", "projects/data-collector/branches/production"
+            "LAKEBASE_BRANCH", "projects/acme-staffing-demo/branches/production"
         ),
     )
     parser.add_argument(
         "--lakebase-database",
         default=os.environ.get(
             "LAKEBASE_DATABASE",
-            "projects/data-collector/branches/production/databases/databricks-postgres",
+            "projects/acme-staffing-demo/branches/production/databases/databricks-postgres",
         ),
     )
     parser.add_argument(

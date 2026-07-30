@@ -1,20 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import CircularProgress from '@mui/material/CircularProgress';
 import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormHelperText from '@mui/material/FormHelperText';
+import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
+import Select from '@mui/material/Select';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
+import {
+  canStageCsvInBrowser,
+  clearStagedCsvImport,
+  CSV_MAX_SIZE_HELP,
+  formatCsvSize,
+  getStagedCsvImport,
+  stageCsvForImport,
+} from '../../lib/csvFile';
 import { showGenieTab } from '../../lib/genie';
+import { formatImportResult, stagedImportNote } from '../../lib/importRecords';
+import {
+  detectSpreadsheetKind,
+  listXlsxSheetNames,
+  readSpreadsheetAsCsv,
+  SPREADSHEET_ACCEPT,
+  spreadsheetFileSizeError,
+  type SpreadsheetKind,
+  xlsxSheetToCsv,
+} from '../../lib/spreadsheetFile';
 import type { AppConfig, DuplicateKeyMode, ProjectDetail, RecordSyncMode, StorageType } from '../../types';
 import BusyButton from '../common/BusyButton';
 import StorageSchemaSelect from '../common/StorageSchemaSelect';
+import RecordCsvImportDialog from './RecordCsvImportDialog';
 
 interface StorageSettingsPanelProps {
   project: ProjectDetail;
@@ -22,6 +46,7 @@ interface StorageSettingsPanelProps {
 }
 
 export default function StorageSettingsPanel({ project, onSaved }: StorageSettingsPanelProps) {
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [storageType, setStorageType] = useState<StorageType>(project.storage_type);
   const [catalog, setCatalog] = useState(project.target_catalog ?? '');
   const [schema, setSchema] = useState(project.target_schema ?? '');
@@ -40,8 +65,18 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
   const [genieSyncing, setGenieSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importCsvText, setImportCsvText] = useState('');
+  const [importHeaderRow, setImportHeaderRow] = useState(1);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [spreadsheetKind, setSpreadsheetKind] = useState<SpreadsheetKind | null>(null);
+  const [xlsxSheetNames, setXlsxSheetNames] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [hasStagedImport, setHasStagedImport] = useState(false);
 
   const isDraft = project.status === 'draft';
+  const isPublished = project.status === 'published';
   const isLakebase = storageType === 'lakebase';
   const isUc = (isDraft ? storageType : project.storage_type) === 'uc_delta';
   const ucAccessMode = appConfig?.uc_data_access_mode ?? 'hybrid';
@@ -51,6 +86,13 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
       : ucAccessMode === 'service_principal'
         ? 'Service principal (app runs all UC data SQL)'
         : 'User on-behalf-of (all UC data SQL as signed-in user)';
+  const canStageImport =
+    importCsvText.length > 0 && canStageCsvInBrowser(importCsvText);
+  const syncTargetLabel = project.storage_type === 'lakebase' ? 'Lakebase' : 'Unity Catalog';
+  const isStagedSyncMode = project.record_sync_mode === 'staged';
+  const fieldLabels = Object.fromEntries(
+    (project.fields ?? []).map((field) => [field.field_key, field.label]),
+  );
 
   useEffect(() => {
     setStorageType(project.storage_type);
@@ -74,6 +116,10 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
       setLakebaseConfigured(Boolean(cfg.lakebase_configured));
     });
   }, []);
+
+  useEffect(() => {
+    setHasStagedImport(Boolean(getStagedCsvImport(project.project_id)));
+  }, [project.project_id]);
 
   const handleStorageTypeChange = (nextType: StorageType) => {
     setStorageType(nextType);
@@ -138,8 +184,107 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     }
   };
 
+  const resetDraftImportFile = () => {
+    setImportCsvText('');
+    setUploadedFile(null);
+    setSpreadsheetKind(null);
+    setXlsxSheetNames([]);
+    setSelectedSheet('');
+    if (importFileRef.current) importFileRef.current.value = '';
+  };
+
+  const handleDraftImportFileSelect = async (file: File) => {
+    setError(null);
+    setMessage(null);
+    const sizeError = spreadsheetFileSizeError(file);
+    if (sizeError) {
+      resetDraftImportFile();
+      setError(sizeError);
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const kind = detectSpreadsheetKind(file);
+      setUploadedFile(file);
+      setSpreadsheetKind(kind);
+      let csv: string;
+      if (kind === 'xlsx') {
+        const sheets = await listXlsxSheetNames(file);
+        const sheet = sheets[0];
+        setXlsxSheetNames(sheets);
+        setSelectedSheet(sheet);
+        csv = await xlsxSheetToCsv(file, sheet);
+      } else {
+        setXlsxSheetNames([]);
+        setSelectedSheet('');
+        csv = await readSpreadsheetAsCsv(file);
+      }
+      setImportCsvText(csv);
+    } catch (err) {
+      resetDraftImportFile();
+      setError(err instanceof Error ? err.message : 'Failed to read spreadsheet file');
+    } finally {
+      setImportLoading(false);
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
+  const handleDraftSheetChange = async (sheet: string) => {
+    if (!uploadedFile || spreadsheetKind !== 'xlsx') return;
+    setSelectedSheet(sheet);
+    setImportLoading(true);
+    setError(null);
+    try {
+      const csv = await xlsxSheetToCsv(uploadedFile, sheet);
+      setImportCsvText(csv);
+    } catch (err) {
+      setImportCsvText('');
+      setError(err instanceof Error ? err.message : 'Failed to read worksheet');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const queueDraftImport = () => {
+    setError(null);
+    setMessage(null);
+    if (!importCsvText.trim()) {
+      setError('Choose a spreadsheet file first.');
+      return;
+    }
+    if (!canStageImport) {
+      setError(
+        `This file is ${formatCsvSize(importCsvText.length)} — too large to queue in the browser. ` +
+          'Publish the form first, then import from Settings or Records.',
+      );
+      return;
+    }
+    try {
+      stageCsvForImport(project.project_id, {
+        csv: importCsvText,
+        headerRow: importHeaderRow > 0 ? importHeaderRow : 1,
+      });
+      setHasStagedImport(true);
+      setMessage('Spreadsheet rows queued. They will import automatically when you publish.');
+      resetDraftImportFile();
+      setImportHeaderRow(1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to queue import');
+    }
+  };
+
+  const clearQueuedImport = () => {
+    clearStagedCsvImport(project.project_id);
+    setHasStagedImport(false);
+    setMessage('Queued import cleared.');
+  };
+
+  const lakebaseProject = (appConfig?.lakebase_project || '').trim();
+  const lakebaseDatabase = (catalog || appConfig?.lakebase_database || '').trim();
+  const lakebaseSchema = (schema || appConfig?.lakebase_default_schema || '').trim();
+  const lakebaseTable = table.trim();
   const storageLabel = isLakebase
-    ? `${catalog}.${schema}.${table}`
+    ? [lakebaseDatabase || '…', lakebaseSchema || '…', lakebaseTable || '…'].join('.')
     : `${project.target_catalog}.${project.target_schema}.${project.target_table}`;
 
   const genieEnabled = showGenieTab(project);
@@ -203,7 +348,57 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
         </Alert>
       )}
 
-      {!isDraft && (
+      {isLakebase && lakebaseConfigured && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Project records upload to this Lakebase location:
+          </Typography>
+          <Box
+            component="code"
+            sx={{
+              display: 'block',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              fontSize: '0.9rem',
+              wordBreak: 'break-all',
+            }}
+          >
+            {storageLabel}
+          </Box>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 1.5,
+              rowGap: 0.25,
+              mt: 1.5,
+            }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              Project
+            </Typography>
+            <Typography variant="body2">{lakebaseProject || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Database
+            </Typography>
+            <Typography variant="body2">{lakebaseDatabase || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Schema
+            </Typography>
+            <Typography variant="body2">{lakebaseSchema || '—'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Table
+            </Typography>
+            <Typography variant="body2">{lakebaseTable || '—'}</Typography>
+          </Box>
+          {!isDraft && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+              Storage location is locked after publish.
+            </Typography>
+          )}
+        </Alert>
+      )}
+
+      {!isDraft && !isLakebase && (
         <Alert severity="info" sx={{ mb: 2 }}>
           Storage location is locked after publish. Current table: <strong>{storageLabel}</strong>
         </Alert>
@@ -377,7 +572,7 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
                 label="Keep existing rows (skip duplicates)"
               />
               <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
-                CSV import and manual entry leave the existing record unchanged.
+                Spreadsheet import and manual entry leave the existing record unchanged.
               </FormHelperText>
               <FormControlLabel
                 value="overwrite"
@@ -403,6 +598,165 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
           )}
         </Box>
       )}
+
+      <Box sx={{ mt: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Import existing rows
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Upload a CSV or Excel (.xlsx) file to load existing data into this form.{' '}
+          {CSV_MAX_SIZE_HELP}
+        </Typography>
+        {isLakebase && lakebaseConfigured && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Imported rows are written to Lakebase project{' '}
+            <strong>{lakebaseProject || '—'}</strong> at{' '}
+            <Box
+              component="strong"
+              sx={{
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontWeight: 600,
+              }}
+            >
+              {storageLabel}
+            </Box>
+            {' '}
+            (database <strong>{lakebaseDatabase || '—'}</strong>, schema{' '}
+            <strong>{lakebaseSchema || '—'}</strong>, table <strong>{lakebaseTable || '—'}</strong>).
+          </Alert>
+        )}
+
+        {isPublished ? (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Map spreadsheet columns to published form fields, then import. Duplicate key handling
+              above controls whether matching keys are skipped or overwritten.
+            </Typography>
+            {isStagedSyncMode && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                This collection stages record changes. Imported rows are held locally until you
+                click <strong>Sync to {syncTargetLabel}</strong> on the Records tab.
+                {project.staged_change_count
+                  ? ` ${project.staged_change_count} change(s) are pending now.`
+                  : ''}
+              </Alert>
+            )}
+            <Button
+              variant="outlined"
+              startIcon={<UploadFileIcon />}
+              onClick={() => setImportDialogOpen(true)}
+            >
+              Import spreadsheet
+            </Button>
+            <RecordCsvImportDialog
+              open={importDialogOpen}
+              projectId={project.project_id}
+              recordKeyColumn={project.record_key_column}
+              onClose={() => setImportDialogOpen(false)}
+              onImported={(result) => {
+                const summary = formatImportResult(result, fieldLabels);
+                setMessage(
+                  isStagedSyncMode ? `${summary} ${stagedImportNote(syncTargetLabel)}` : summary,
+                );
+                setError(null);
+                onSaved();
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              While the form is still a draft, queue a spreadsheet to import automatically when you
+              publish. After publish, use this section or the Records tab for additional imports.
+            </Typography>
+            {hasStagedImport && (
+              <Alert
+                severity="info"
+                sx={{ mb: 2 }}
+                action={
+                  <Button color="inherit" size="small" onClick={clearQueuedImport}>
+                    Clear
+                  </Button>
+                }
+              >
+                Spreadsheet rows are queued and will import when you publish.
+              </Alert>
+            )}
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', mb: 2 }}>
+              <TextField
+                label="Header row"
+                type="number"
+                size="small"
+                value={importHeaderRow}
+                onChange={(e) => {
+                  const next = Number.parseInt(e.target.value, 10);
+                  setImportHeaderRow(Number.isFinite(next) && next > 0 ? next : 1);
+                }}
+                inputProps={{ min: 1, step: 1 }}
+                helperText="Row where column names appear"
+                sx={{ width: 160 }}
+              />
+              {spreadsheetKind === 'xlsx' && xlsxSheetNames.length > 0 && (
+                <FormControl size="small" sx={{ minWidth: 200 }}>
+                  <InputLabel id="settings-xlsx-sheet-label">Sheet</InputLabel>
+                  <Select
+                    labelId="settings-xlsx-sheet-label"
+                    label="Sheet"
+                    value={selectedSheet}
+                    onChange={(e) => void handleDraftSheetChange(e.target.value)}
+                    disabled={importLoading}
+                  >
+                    {xlsxSheetNames.map((sheet) => (
+                      <MenuItem key={sheet} value={sheet}>
+                        {sheet}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+              <input
+                ref={importFileRef}
+                type="file"
+                accept={SPREADSHEET_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleDraftImportFileSelect(file);
+                }}
+              />
+              <Button
+                variant="outlined"
+                startIcon={importLoading ? <CircularProgress size={16} /> : <UploadFileIcon />}
+                onClick={() => importFileRef.current?.click()}
+                disabled={importLoading}
+              >
+                {importLoading ? 'Reading…' : 'Choose spreadsheet file'}
+              </Button>
+            </Box>
+            {importCsvText.trim().length > 0 && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  File ready ({formatCsvSize(importCsvText.length)}
+                  {spreadsheetKind === 'xlsx' && selectedSheet ? `, sheet “${selectedSheet}”` : ''}).
+                </Typography>
+                {!canStageImport && (
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    This file is too large to queue in the browser. Publish first, then import from
+                    Settings or Records.
+                  </Alert>
+                )}
+                <BusyButton
+                  variant="contained"
+                  onClick={queueDraftImport}
+                  disabled={!canStageImport}
+                >
+                  Queue import for publish
+                </BusyButton>
+              </Box>
+            )}
+          </>
+        )}
+      </Box>
 
       {project.status === 'published' && genieEnabled && (
         <Box sx={{ mt: 4 }}>

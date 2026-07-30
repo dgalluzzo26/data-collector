@@ -84,6 +84,7 @@ export default function SettingsView() {
             <ConfigRow label="SQL warehouse HTTP path" value={config?.warehouse_http_path} />
             <ConfigRow label="Database status" value={config?.db_status} />
             <ConfigRow label="Lakebase configured" value={config?.lakebase_configured ? 'yes' : 'no'} />
+            <ConfigRow label="Lakebase project" value={config?.lakebase_project} />
             <ConfigRow label="Lakebase database" value={config?.lakebase_database} />
             <ConfigRow label="Lakebase default schema" value={config?.lakebase_default_schema} />
             <ConfigRow
