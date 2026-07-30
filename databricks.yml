@@ -45,10 +45,10 @@ variables:
     default: data_collector
   lakebase_branch:
     description: Lakebase Postgres branch resource path for the database app resource.
-    default: projects/data-collector/branches/production
+    default: projects/acme-staffing-demo/branches/production
   lakebase_database:
     description: Lakebase Postgres database resource path for the database app resource.
-    default: projects/data-collector/branches/production/databases/databricks-postgres
+    default: projects/acme-staffing-demo/branches/production/databases/databricks-postgres
 
 targets:
   dev:

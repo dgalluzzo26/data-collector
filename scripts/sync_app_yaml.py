@@ -47,6 +47,21 @@ def sync_app_yaml(
         text,
         count=1,
     )
+    if values.get("lakebase_project"):
+        if re.search(r'- name: LAKEBASE_PROJECT\n\s+value:', text):
+            text = re.sub(
+                r'(- name: LAKEBASE_PROJECT\n\s+value:\s*")[^"]*(")',
+                rf'\1{values["lakebase_project"]}\2',
+                text,
+                count=1,
+            )
+        else:
+            text = re.sub(
+                r'(- name: ENDPOINT_NAME\n\s+valueFrom: database\n)',
+                rf'\1  - name: LAKEBASE_PROJECT\n    value: "{values["lakebase_project"]}"\n',
+                text,
+                count=1,
+            )
     app_path.write_text(text)
     return values
 

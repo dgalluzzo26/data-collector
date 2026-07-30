@@ -9,8 +9,48 @@ from pathlib import Path
 from typing import Any
 
 
-def read_target_variables(target: str, path: Path | None = None) -> dict[str, str]:
+def read_root_variable_defaults(path: Path | None = None) -> dict[str, str]:
+    """Read `variables.<name>.default` values from the top-level bundle section."""
     text = (path or Path("databricks.yml")).read_text()
+    values: dict[str, str] = {}
+    in_variables = False
+    current_key: str | None = None
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "variables:":
+            in_variables = True
+            current_key = None
+            continue
+        if not in_variables:
+            continue
+        # Next top-level section ends the variables block.
+        if stripped and not line.startswith(" ") and stripped.endswith(":") and ":" == stripped[-1]:
+            if stripped != "variables:":
+                break
+        if not line.startswith(" "):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 2 and stripped.endswith(":") and not stripped.startswith("default:"):
+            current_key = stripped[:-1].strip()
+            continue
+        if current_key and stripped.startswith("default:"):
+            values[current_key] = stripped.split(":", 1)[1].strip()
+            current_key = None
+
+    return values
+
+
+def lakebase_project_from_path(path: str) -> str | None:
+    parts = path.strip().strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "projects" and parts[1]:
+        return parts[1]
+    return None
+
+
+def read_target_variables(target: str, path: Path | None = None) -> dict[str, str]:
+    yml = path or Path("databricks.yml")
+    text = yml.read_text()
     section: str | None = None
     in_variables = False
     values: dict[str, str] = {}
@@ -40,7 +80,24 @@ def read_target_variables(target: str, path: Path | None = None) -> dict[str, st
         raise SystemExit(
             f"Target '{target}' in databricks.yml is missing variables: {', '.join(missing)}"
         )
-    return {key: values[key] for key in required}
+
+    root_defaults = read_root_variable_defaults(yml)
+    lakebase_branch = root_defaults.get("lakebase_branch", "")
+    lakebase_database = root_defaults.get("lakebase_database", "")
+    lakebase_project = (
+        lakebase_project_from_path(lakebase_database)
+        or lakebase_project_from_path(lakebase_branch)
+        or ""
+    )
+
+    result = {key: values[key] for key in required}
+    if lakebase_branch:
+        result["lakebase_branch"] = lakebase_branch
+    if lakebase_database:
+        result["lakebase_database"] = lakebase_database
+    if lakebase_project:
+        result["lakebase_project"] = lakebase_project
+    return result
 
 
 def main(argv: list[str]) -> int:

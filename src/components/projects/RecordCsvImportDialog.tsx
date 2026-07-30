@@ -9,7 +9,11 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
+import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import InputLabel from '@mui/material/InputLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Select from '@mui/material/Select';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -18,7 +22,16 @@ import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import { CSV_MAX_SIZE_HELP, csvFileSizeError, readCsvFile } from '../../lib/csvFile';
+import { CSV_MAX_SIZE_HELP } from '../../lib/csvFile';
+import {
+  detectSpreadsheetKind,
+  listXlsxSheetNames,
+  readSpreadsheetAsCsv,
+  SPREADSHEET_ACCEPT,
+  spreadsheetFileSizeError,
+  type SpreadsheetKind,
+  xlsxSheetToCsv,
+} from '../../lib/spreadsheetFile';
 import type {
   ImportRecordsResult,
   RecordCsvColumnMapping,
@@ -45,6 +58,10 @@ export default function RecordCsvImportDialog({
   const lastAnalyzedHeaderRowRef = useRef(1);
   const [csvText, setCsvText] = useState('');
   const [headerRow, setHeaderRow] = useState(1);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [spreadsheetKind, setSpreadsheetKind] = useState<SpreadsheetKind | null>(null);
+  const [xlsxSheetNames, setXlsxSheetNames] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState('');
   const [preview, setPreview] = useState<RecordCsvPreview | null>(null);
   const [columns, setColumns] = useState<RecordCsvColumnMapping[]>([]);
   const [includedKeys, setIncludedKeys] = useState<Set<string>>(new Set());
@@ -55,6 +72,10 @@ export default function RecordCsvImportDialog({
   const reset = () => {
     setCsvText('');
     setHeaderRow(1);
+    setUploadedFile(null);
+    setSpreadsheetKind(null);
+    setXlsxSheetNames([]);
+    setSelectedSheet('');
     lastAnalyzedHeaderRowRef.current = 1;
     setPreview(null);
     setColumns([]);
@@ -96,7 +117,7 @@ export default function RecordCsvImportDialog({
     } catch (err) {
       setPreview(null);
       setColumns([]);
-      setError(err instanceof Error ? err.message : 'Failed to analyze CSV');
+      setError(err instanceof Error ? err.message : 'Failed to analyze spreadsheet');
     } finally {
       setPreviewLoading(false);
     }
@@ -104,26 +125,67 @@ export default function RecordCsvImportDialog({
 
   const handleFileSelect = async (file: File) => {
     setError(null);
-    const sizeError = csvFileSizeError(file);
+    const sizeError = spreadsheetFileSizeError(file);
     if (sizeError) {
       setPreview(null);
       setColumns([]);
       setCsvText('');
+      setUploadedFile(null);
+      setSpreadsheetKind(null);
+      setXlsxSheetNames([]);
+      setSelectedSheet('');
       setError(sizeError);
       if (fileRef.current) fileRef.current.value = '';
       return;
     }
     try {
-      const csv = await readCsvFile(file);
+      const kind = detectSpreadsheetKind(file);
+      setUploadedFile(file);
+      setSpreadsheetKind(kind);
+      let csv: string;
+      if (kind === 'xlsx') {
+        const sheets = await listXlsxSheetNames(file);
+        const sheet = sheets[0];
+        setXlsxSheetNames(sheets);
+        setSelectedSheet(sheet);
+        csv = await xlsxSheetToCsv(file, sheet);
+      } else {
+        setXlsxSheetNames([]);
+        setSelectedSheet('');
+        csv = await readSpreadsheetAsCsv(file);
+      }
       setCsvText(csv);
       await analyzeCsv(csv, headerRow, true);
     } catch (err) {
       setPreview(null);
       setColumns([]);
       setCsvText('');
-      setError(err instanceof Error ? err.message : 'Failed to read CSV file');
+      setUploadedFile(null);
+      setSpreadsheetKind(null);
+      setXlsxSheetNames([]);
+      setSelectedSheet('');
+      setError(err instanceof Error ? err.message : 'Failed to read spreadsheet file');
     } finally {
       if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const handleSheetChange = async (sheet: string) => {
+    if (!uploadedFile || spreadsheetKind !== 'xlsx') return;
+    setSelectedSheet(sheet);
+    setPreviewLoading(true);
+    setError(null);
+    try {
+      const csv = await xlsxSheetToCsv(uploadedFile, sheet);
+      setCsvText(csv);
+      await analyzeCsv(csv, headerRow, true);
+    } catch (err) {
+      setPreview(null);
+      setColumns([]);
+      setCsvText('');
+      setError(err instanceof Error ? err.message : 'Failed to read worksheet');
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -169,7 +231,7 @@ export default function RecordCsvImportDialog({
       onImported(result);
       handleClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'CSV import failed');
+      setError(err instanceof Error ? err.message : 'Spreadsheet import failed');
     } finally {
       setImporting(false);
     }
@@ -177,11 +239,11 @@ export default function RecordCsvImportDialog({
 
   return (
     <Dialog open={open} onClose={handleClose} fullWidth maxWidth="md">
-      <DialogTitle>Import records from CSV</DialogTitle>
+      <DialogTitle>Import records from spreadsheet</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
         <Typography variant="body2" color="text.secondary">
-          Upload a CSV and map columns to your published form fields. Only matched columns with
-          checkboxes selected will be imported. {CSV_MAX_SIZE_HELP}
+          Upload a CSV or Excel (.xlsx) file and map columns to your published form fields. Only
+          matched columns with checkboxes selected will be imported. {CSV_MAX_SIZE_HELP}
         </Typography>
 
         {error && (
@@ -207,10 +269,28 @@ export default function RecordCsvImportDialog({
             helperText="Row number where column names appear (row 1 is the first line)"
             sx={{ width: 160 }}
           />
+          {spreadsheetKind === 'xlsx' && xlsxSheetNames.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel id="record-xlsx-sheet-label">Sheet</InputLabel>
+              <Select
+                labelId="record-xlsx-sheet-label"
+                label="Sheet"
+                value={selectedSheet}
+                onChange={(e) => void handleSheetChange(e.target.value)}
+                disabled={previewLoading}
+              >
+                {xlsxSheetNames.map((sheet) => (
+                  <MenuItem key={sheet} value={sheet}>
+                    {sheet}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,text/csv"
+            accept={SPREADSHEET_ACCEPT}
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -223,7 +303,7 @@ export default function RecordCsvImportDialog({
             onClick={() => fileRef.current?.click()}
             disabled={previewLoading}
           >
-            {previewLoading ? 'Analyzing CSV…' : 'Choose CSV file'}
+            {previewLoading ? 'Analyzing…' : 'Choose spreadsheet file'}
           </Button>
           {csvText.trim().length > 0 && (
             <Button
@@ -245,7 +325,8 @@ export default function RecordCsvImportDialog({
 
         {preview && preview.unmatched_csv_headers.length > 0 && (
           <Alert severity="info">
-            CSV columns not matched to form fields: {preview.unmatched_csv_headers.join(', ')}
+            Spreadsheet columns not matched to form fields:{' '}
+            {preview.unmatched_csv_headers.join(', ')}
           </Alert>
         )}
 
@@ -273,7 +354,7 @@ export default function RecordCsvImportDialog({
                       ? `${col.label} ← ${col.csv_header ?? col.field_key}${
                           col.field_key === recordKeyColumn ? ' — record key' : ''
                         }`
-                      : `${col.label} — not found in CSV`
+                      : `${col.label} — not found in spreadsheet`
                   }
                 />
               ))}

@@ -6,7 +6,7 @@ export const CSV_BROWSER_STAGE_MAX_CHARS = 4_000_000;
 
 export const CSV_MAX_SIZE_LABEL = formatCsvSize(CSV_MAX_CHARS);
 
-export const CSV_MAX_SIZE_HELP = `Maximum CSV file size: ${CSV_MAX_SIZE_LABEL}.`;
+export const CSV_MAX_SIZE_HELP = `Maximum spreadsheet file size: ${CSV_MAX_SIZE_LABEL}.`;
 
 export function canStageCsvInBrowser(csv: string): boolean {
   return csv.length <= CSV_BROWSER_STAGE_MAX_CHARS;
@@ -20,7 +20,7 @@ export function formatCsvSize(chars: number): string {
 }
 
 function csvTooLargeMessage(size: number, fileName?: string): string {
-  const label = fileName ? `"${fileName}"` : 'This CSV file';
+  const label = fileName ? `"${fileName}"` : 'This spreadsheet file';
   return (
     `${label} is ${formatCsvSize(size)}, which exceeds the ${CSV_MAX_SIZE_LABEL} limit. ` +
     'Use a smaller file to create the form, or create the form first and import records from the Records tab.'
@@ -73,7 +73,7 @@ export function stageCsvForImport(projectId: string, payload: StagedCsvImport): 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to stage CSV';
     throw new Error(
-      `${message}. The CSV may be too large to import automatically after publish — publish first, then use Records → Import CSV.`,
+      `${message}. The file may be too large to import automatically after publish — publish first, then use Records → Import spreadsheet.`,
     );
   }
 }

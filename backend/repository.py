@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -27,6 +29,13 @@ from backend.sql_util import (
 from backend.validation import coerce_value_for_storage
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+_LOG = logging.getLogger(__name__)
+
+# Rows per multi-row INSERT when syncing staged records to Lakebase.
+_LAKEBASE_INSERT_BATCH = 200
+# Per-row errors returned to the client; the full count is always reported.
+_SYNC_FAILURE_SAMPLE = 10
 
 
 def _now() -> datetime:
@@ -1280,11 +1289,192 @@ def count_staged_changes(project_id: str) -> int:
     return staged_records.count_staged(project_id)
 
 
+@dataclass
+class _SyncTally:
+    """Running totals for a staged sync; one bad row must not sink the batch."""
+
+    inserted: int = 0
+    updated: int = 0
+    deleted: int = 0
+    skipped: int = 0
+    synced_ids: list[str] = dataclass_field(default_factory=list)
+    failures: list[dict[str, str]] = dataclass_field(default_factory=list)
+
+    def succeeded(self, record_id: str) -> None:
+        self.synced_ids.append(record_id)
+
+    def failed(self, record_id: str, exc: BaseException) -> None:
+        message = str(exc).strip() or exc.__class__.__name__
+        self.failures.append({"record_id": record_id, "error": message})
+        _LOG.warning("Staged sync failed for record %s: %s", record_id, message)
+
+
+def _staged_insert_values(
+    project: dict[str, Any], record_id: str, values: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    """Insert payload for a staged row, with the record key column filled in."""
+    key_col = _record_key_column(project)
+    insert_values = dict(values)
+    if not key_col:
+        return record_id, insert_values
+    if key_col not in insert_values:
+        insert_values[key_col] = record_id
+    key_value = insert_values.get(key_col)
+    if key_value is None or (isinstance(key_value, str) and not key_value.strip()):
+        raise ValueError(f"{key_col} is required")
+    return str(key_value), insert_values
+
+
+def _sync_staged_to_lakebase(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    rows: list[dict[str, Any]],
+    user_email: str,
+) -> _SyncTally:
+    from backend import lakebase_storage
+
+    tally = _SyncTally()
+    overwrite = _duplicate_key_mode(project) == "overwrite"
+
+    # One column lookup and one existence probe for the whole batch; doing this
+    # per row is what pushed large syncs past the request timeout.
+    columns = lakebase_storage.column_map(project)
+    existing = lakebase_storage.existing_record_ids(
+        project, [str(row["record_id"]) for row in rows], columns=columns
+    )
+
+    pending_inserts: list[tuple[str, str, dict[str, Any]]] = []
+
+    for row in rows:
+        record_id = str(row["record_id"])
+        operation = row["operation"]
+        try:
+            if operation == "delete":
+                if record_id in existing:
+                    lakebase_storage.delete_record(project, record_id, columns=columns)
+                tally.deleted += 1
+                tally.succeeded(record_id)
+                continue
+
+            values = json.loads(row["values_json"] or "{}")
+
+            if record_id in existing:
+                if operation == "insert" and not overwrite:
+                    tally.skipped += 1
+                    continue
+                lakebase_storage.update_record(
+                    project, fields, record_id, values, user_email, columns=columns
+                )
+                tally.updated += 1
+                tally.succeeded(record_id)
+                continue
+
+            insert_id, insert_values = _staged_insert_values(project, record_id, values)
+            pending_inserts.append((record_id, insert_id, insert_values))
+        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the batch
+            tally.failed(record_id, exc)
+
+    _insert_lakebase_batches(
+        project, fields, pending_inserts, user_email, columns, tally
+    )
+    return tally
+
+
+def _insert_lakebase_batches(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    pending: list[tuple[str, str, dict[str, Any]]],
+    user_email: str,
+    columns: dict[str, str],
+    tally: _SyncTally,
+) -> None:
+    """Insert in multi-row statements, falling back to row-at-a-time on error."""
+    from backend import lakebase_storage
+
+    for start in range(0, len(pending), _LAKEBASE_INSERT_BATCH):
+        chunk = pending[start : start + _LAKEBASE_INSERT_BATCH]
+        try:
+            lakebase_storage.insert_records_batch(
+                project,
+                fields,
+                [(insert_id, values) for _, insert_id, values in chunk],
+                user_email,
+                columns=columns,
+            )
+        except Exception:  # noqa: BLE001 - retry singly to isolate the bad rows
+            for record_id, insert_id, values in chunk:
+                try:
+                    lakebase_storage.insert_records_batch(
+                        project,
+                        fields,
+                        [(insert_id, values)],
+                        user_email,
+                        columns=columns,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    tally.failed(record_id, exc)
+                    continue
+                tally.inserted += 1
+                tally.succeeded(record_id)
+            continue
+
+        tally.inserted += len(chunk)
+        for record_id, _insert_id, _values in chunk:
+            tally.succeeded(record_id)
+
+
+def _sync_staged_to_uc(
+    project: dict[str, Any],
+    fields: list[FieldDefinition],
+    rows: list[dict[str, Any]],
+    user_email: str,
+) -> _SyncTally:
+    tally = _SyncTally()
+    overwrite = _duplicate_key_mode(project) == "overwrite"
+
+    for row in rows:
+        record_id = str(row["record_id"])
+        operation = row["operation"]
+        try:
+            if operation == "delete":
+                if _get_record_from_uc(project, fields, record_id):
+                    _delete_record_from_uc(project, record_id)
+                tally.deleted += 1
+                tally.succeeded(record_id)
+                continue
+
+            values = json.loads(row["values_json"] or "{}")
+
+            if _get_record_from_uc(project, fields, record_id):
+                if operation == "insert" and not overwrite:
+                    tally.skipped += 1
+                    continue
+                _update_record_in_uc(project, fields, record_id, values, user_email)
+                tally.updated += 1
+                tally.succeeded(record_id)
+                continue
+
+            _insert_record_to_uc(
+                project,
+                fields,
+                values,
+                user_email,
+                record_id=record_id,
+                skip_duplicate_check=True,
+            )
+            tally.inserted += 1
+            tally.succeeded(record_id)
+        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the batch
+            tally.failed(record_id, exc)
+
+    return tally
+
+
 def sync_staged_records(
     project: dict[str, Any],
     fields: list[FieldDefinition],
     user_email: str,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     from backend import staged_records
 
     if not _uses_staged_sync(project):
@@ -1292,121 +1482,33 @@ def sync_staged_records(
 
     rows = staged_records.list_staged(project["project_id"])
     if not rows:
-        return {"synced": 0, "inserted": 0, "updated": 0, "deleted": 0, "skipped": 0}
+        return {
+            "synced": 0,
+            "inserted": 0,
+            "updated": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "failed": 0,
+            "failures": [],
+        }
 
-    inserted = updated = deleted = skipped = 0
-    synced_ids: list[str] = []
     if _is_lakebase(project):
-        from backend import lakebase_storage
-
-        for row in rows:
-            record_id = row["record_id"]
-            operation = row["operation"]
-            if operation == "delete":
-                if lakebase_storage.record_exists(project, record_id):
-                    lakebase_storage.delete_record(project, record_id)
-                deleted += 1
-                synced_ids.append(record_id)
-                continue
-            values = json.loads(row["values_json"] or "{}")
-            if operation == "insert":
-                if lakebase_storage.record_exists(project, record_id):
-                    if _duplicate_key_mode(project) == "overwrite":
-                        lakebase_storage.update_record(
-                            project, fields, record_id, values, user_email
-                        )
-                        updated += 1
-                        synced_ids.append(record_id)
-                    else:
-                        skipped += 1
-                    continue
-                key_col = _record_key_column(project)
-                insert_values = dict(values)
-                if key_col and key_col not in insert_values:
-                    insert_values[key_col] = record_id
-                lakebase_storage.create_record(
-                    project, fields, insert_values, user_email, record_id=record_id
-                )
-                inserted += 1
-                synced_ids.append(record_id)
-                continue
-            if operation == "update":
-                if lakebase_storage.record_exists(project, record_id):
-                    lakebase_storage.update_record(
-                        project, fields, record_id, values, user_email
-                    )
-                    updated += 1
-                else:
-                    key_col = _record_key_column(project)
-                    insert_values = dict(values)
-                    if key_col and key_col not in insert_values:
-                        insert_values[key_col] = record_id
-                    lakebase_storage.create_record(
-                        project, fields, insert_values, user_email, record_id=record_id
-                    )
-                    inserted += 1
-                synced_ids.append(record_id)
+        tally = _sync_staged_to_lakebase(project, fields, rows, user_email)
     else:
         with project_data_scope(project):
-            for row in rows:
-                record_id = row["record_id"]
-                operation = row["operation"]
-                if operation == "delete":
-                    if _get_record_from_uc(project, fields, record_id):
-                        _delete_record_from_uc(project, record_id)
-                    deleted += 1
-                    synced_ids.append(record_id)
-                    continue
-                values = json.loads(row["values_json"] or "{}")
-                if operation == "insert":
-                    if _get_record_from_uc(project, fields, record_id):
-                        if _duplicate_key_mode(project) == "overwrite":
-                            _update_record_in_uc(
-                                project, fields, record_id, values, user_email
-                            )
-                            updated += 1
-                            synced_ids.append(record_id)
-                        else:
-                            skipped += 1
-                        continue
-                    _insert_record_to_uc(
-                        project,
-                        fields,
-                        values,
-                        user_email,
-                        record_id=record_id,
-                        skip_duplicate_check=True,
-                    )
-                    inserted += 1
-                    synced_ids.append(record_id)
-                    continue
-                if operation == "update":
-                    if _get_record_from_uc(project, fields, record_id):
-                        _update_record_in_uc(
-                            project, fields, record_id, values, user_email
-                        )
-                        updated += 1
-                    else:
-                        _insert_record_to_uc(
-                            project,
-                            fields,
-                            values,
-                            user_email,
-                            record_id=record_id,
-                            skip_duplicate_check=True,
-                        )
-                        inserted += 1
-                    synced_ids.append(record_id)
+            tally = _sync_staged_to_uc(project, fields, rows, user_email)
 
-    for record_id in synced_ids:
-        staged_records.delete_staged(project["project_id"], record_id)
-    synced = inserted + updated + deleted
+    # Failed rows stay staged so the user can fix the data and retry.
+    staged_records.delete_staged_batch(project["project_id"], tally.synced_ids)
+
     return {
-        "synced": synced,
-        "inserted": inserted,
-        "updated": updated,
-        "deleted": deleted,
-        "skipped": skipped,
+        "synced": tally.inserted + tally.updated + tally.deleted,
+        "inserted": tally.inserted,
+        "updated": tally.updated,
+        "deleted": tally.deleted,
+        "skipped": tally.skipped,
+        "failed": len(tally.failures),
+        "failures": tally.failures[:_SYNC_FAILURE_SAMPLE],
     }
 
 

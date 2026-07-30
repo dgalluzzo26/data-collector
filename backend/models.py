@@ -233,12 +233,19 @@ class ImportRecordsResult(BaseModel):
     failed: list[ImportRecordError] = Field(default_factory=list)
 
 
+class SyncStagedRecordFailure(BaseModel):
+    record_id: str
+    error: str
+
+
 class SyncStagedRecordsResult(BaseModel):
     synced: int
     inserted: int
     updated: int
     deleted: int
     skipped: int = 0
+    failed: int = 0
+    failures: list[SyncStagedRecordFailure] = Field(default_factory=list)
 
 
 class LookupColumn(BaseModel):
