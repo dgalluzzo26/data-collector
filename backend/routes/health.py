@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, Request
 
 from backend import auth, config
-from backend import lakebase_config
+from backend import lakebase_config, lakebase_settings_repository
 from backend.app_admin import is_app_admin
 from backend.uc_data_access import get_uc_data_access_mode
 
@@ -48,6 +48,8 @@ def health(request: Request):
         "lakebase_configured": lakebase_config.is_configured(),
         "lakebase_database": lakebase_config.database_name() if lakebase_config.is_configured() else None,
         "lakebase_default_schema": lakebase_config.default_schema(),
+        "lakebase_data_api_linked": lakebase_settings_repository.is_data_api_linked(),
+        "lakebase_data_api_url": lakebase_settings_repository.get_lakebase_settings().get("data_api_url"),
         "uc_data_access_mode": get_uc_data_access_mode(),
         **user_data,
     }

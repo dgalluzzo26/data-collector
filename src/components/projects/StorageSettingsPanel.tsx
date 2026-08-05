@@ -11,7 +11,7 @@ import RadioGroup from '@mui/material/RadioGroup';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { api } from '../../api/client';
-import { hasSyncLocation, showGenieTab } from '../../lib/genie';
+import { showGenieTab } from '../../lib/genie';
 import type { AppConfig, DuplicateKeyMode, ProjectDetail, RecordSyncMode, StorageType } from '../../types';
 import BusyButton from '../common/BusyButton';
 import StorageSchemaSelect from '../common/StorageSchemaSelect';
@@ -26,9 +26,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
   const [catalog, setCatalog] = useState(project.target_catalog ?? '');
   const [schema, setSchema] = useState(project.target_schema ?? '');
   const [table, setTable] = useState(project.target_table ?? '');
-  const [syncCatalog, setSyncCatalog] = useState(project.sync_catalog ?? '');
-  const [syncSchema, setSyncSchema] = useState(project.sync_schema ?? '');
-  const [syncTable, setSyncTable] = useState(project.sync_table ?? '');
   const [recordSyncMode, setRecordSyncMode] = useState<RecordSyncMode | ''>(
     project.record_sync_mode ?? '',
   );
@@ -38,7 +35,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lakebaseConfigured, setLakebaseConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [savingSync, setSavingSync] = useState(false);
   const [savingSyncMode, setSavingSyncMode] = useState(false);
   const [savingDuplicateKeyMode, setSavingDuplicateKeyMode] = useState(false);
   const [genieSyncing, setGenieSyncing] = useState(false);
@@ -61,9 +57,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     setCatalog(project.target_catalog ?? '');
     setSchema(project.target_schema ?? '');
     setTable(project.target_table ?? '');
-    setSyncCatalog(project.sync_catalog ?? '');
-    setSyncSchema(project.sync_schema ?? '');
-    setSyncTable(project.sync_table ?? '');
     setRecordSyncMode(project.record_sync_mode ?? '');
     setDuplicateKeyMode(project.duplicate_key_mode ?? 'retain');
   }, [
@@ -71,9 +64,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     project.target_catalog,
     project.target_schema,
     project.target_table,
-    project.sync_catalog,
-    project.sync_schema,
-    project.sync_table,
     project.record_sync_mode,
     project.duplicate_key_mode,
   ]);
@@ -117,25 +107,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     }
   };
 
-  const saveSyncLocation = async () => {
-    setSavingSync(true);
-    setMessage(null);
-    setError(null);
-    try {
-      await api.updateProject(project.project_id, {
-        sync_catalog: syncCatalog.trim(),
-        sync_schema: syncSchema.trim(),
-        sync_table: syncTable.trim(),
-      });
-      setMessage('UC sync location saved.');
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
-    } finally {
-      setSavingSync(false);
-    }
-  };
-
   const saveRecordSyncMode = async () => {
     if (!recordSyncMode) return;
     setSavingSyncMode(true);
@@ -171,9 +142,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
     ? `${catalog}.${schema}.${table}`
     : `${project.target_catalog}.${project.target_schema}.${project.target_table}`;
 
-  const syncLabel = hasSyncLocation(project)
-    ? `${project.sync_catalog}.${project.sync_schema}.${project.sync_table}`
-    : null;
   const genieEnabled = showGenieTab(project);
 
   return (
@@ -304,22 +272,22 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
         </Box>
       )}
 
-      {isUc && (
+      {(isUc || isLakebase) && (
         <Box sx={{ mt: 4 }}>
           <Typography variant="h6" gutterBottom>
-            Unity Catalog record updates
+            {isLakebase ? 'Lakebase record updates' : 'Unity Catalog record updates'}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Choose how editor changes are written to the backing UC table. This is required before
-            you can publish.
+            Choose how editor changes are written to the backing{' '}
+            {isLakebase ? 'Lakebase' : 'UC'} table. This is required before you can publish.
           </Typography>
           {!isDraft && project.record_sync_mode && (
             <Alert severity="info" sx={{ mb: 2 }}>
               Mode locked after publish:{' '}
               <strong>
                 {project.record_sync_mode === 'immediate'
-                  ? 'Write directly to Unity Catalog'
-                  : 'Stage locally, then bulk sync'}
+                  ? `Write directly to ${isLakebase ? 'Lakebase' : 'Unity Catalog'}`
+                  : `Stage locally, then bulk sync to ${isLakebase ? 'Lakebase' : 'UC'}`}
               </strong>
               {project.staged_change_count ? ` (${project.staged_change_count} pending)` : ''}
             </Alert>
@@ -337,19 +305,28 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
               <FormControlLabel
                 value="immediate"
                 control={<Radio />}
-                label="Write changes directly to Unity Catalog"
+                label={
+                  isLakebase
+                    ? 'Write changes directly to Lakebase'
+                    : 'Write changes directly to Unity Catalog'
+                }
               />
               <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
-                Each create, edit, or delete updates the UC table immediately.
+                Each create, edit, or delete updates the {isLakebase ? 'Lakebase' : 'UC'} table
+                immediately.
               </FormHelperText>
               <FormControlLabel
                 value="staged"
                 control={<Radio />}
-                label="Stage changes locally, then bulk sync to UC"
+                label={
+                  isLakebase
+                    ? 'Stage changes locally, then bulk sync to Lakebase'
+                    : 'Stage changes locally, then bulk sync to UC'
+                }
               />
               <FormHelperText sx={{ mt: -1, mb: 1, ml: 4 }}>
-                Editors work against local staged changes. An admin or editor syncs them to UC in one
-                batch from the Records tab.
+                Editors work against local staged changes. An admin or editor syncs them to{' '}
+                {isLakebase ? 'Lakebase' : 'UC'} in one batch from the Records tab.
               </FormHelperText>
             </RadioGroup>
           </FormControl>
@@ -424,50 +401,6 @@ export default function StorageSettingsPanel({ project, onSaved }: StorageSettin
               </BusyButton>
             </Box>
           )}
-        </Box>
-      )}
-
-      {isLakebase && (
-        <Box sx={{ mt: 4 }}>
-          <Typography variant="h6" gutterBottom>
-            Unity Catalog sync location
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Configure Lakebase → Unity Catalog sync outside this app (Lakehouse Sync or UC registration).
-            Enter the UC catalog, schema, and table where synced data appears to enable Genie Q&amp;A.
-          </Typography>
-          {!isDraft && syncLabel && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Current sync location: <strong>{syncLabel}</strong>
-            </Alert>
-          )}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <TextField
-              label="Sync catalog"
-              value={syncCatalog}
-              onChange={(e) => setSyncCatalog(e.target.value)}
-              size="small"
-              helperText={`Default data catalog: ${appConfig?.default_data_catalog || '…'}`}
-            />
-            <TextField
-              label="Sync schema"
-              value={syncSchema}
-              onChange={(e) => setSyncSchema(e.target.value)}
-              size="small"
-            />
-            <TextField
-              label="Sync table"
-              value={syncTable}
-              onChange={(e) => setSyncTable(e.target.value)}
-              size="small"
-              helperText="UC table name after sync (may differ from the Postgres table name)"
-            />
-          </Box>
-          <Box sx={{ mt: 2 }}>
-            <BusyButton variant="outlined" onClick={saveSyncLocation} busy={savingSync} busyLabel="Saving…">
-              Save sync location
-            </BusyButton>
-          </Box>
         </Box>
       )}
 

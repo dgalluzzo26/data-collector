@@ -21,6 +21,7 @@ export interface LookupColumn {
   key: string;
   label: string;
   type?: 'text' | 'number' | 'date' | 'datetime' | 'boolean';
+  required?: boolean;
 }
 
 export interface LookupTable {
@@ -216,6 +217,7 @@ export interface SyncStagedRecordsResult {
   inserted: number;
   updated: number;
   deleted: number;
+  skipped?: number;
 }
 
 export interface CreateProjectPayload {
@@ -257,6 +259,10 @@ export interface ApplyProjectProposalPayload {
   lookups?: LookupProposal[];
 }
 
+export interface LakebaseSettings {
+  data_api_url?: string | null;
+}
+
 export interface AppConfig {
   status: string;
   app: string;
@@ -275,6 +281,8 @@ export interface AppConfig {
   lakebase_configured?: boolean;
   lakebase_database?: string | null;
   lakebase_default_schema?: string;
+  lakebase_data_api_linked?: boolean;
+  lakebase_data_api_url?: string | null;
   uc_data_access_mode?: 'hybrid' | 'service_principal' | 'user_obo';
 }
 

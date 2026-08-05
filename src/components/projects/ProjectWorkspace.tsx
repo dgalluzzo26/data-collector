@@ -167,10 +167,14 @@ export default function ProjectWorkspace() {
   };
 
   const publish = async () => {
-    if (project.storage_type === 'uc_delta' && !project.record_sync_mode) {
+    if (
+      (project.storage_type === 'uc_delta' || project.storage_type === 'lakebase') &&
+      !project.record_sync_mode
+    ) {
+      const target = project.storage_type === 'lakebase' ? 'Lakebase' : 'Unity Catalog';
       setMessage({
         title: 'Cannot publish yet',
-        text: 'Choose how record changes sync to Unity Catalog in Settings before publishing.',
+        text: `Choose how record changes sync to ${target} in Settings before publishing.`,
         severity: 'error',
       });
       setTab('settings');

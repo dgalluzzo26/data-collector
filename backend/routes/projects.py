@@ -14,7 +14,7 @@ from backend.csv_util import (
 from backend.deps import assert_role, project_to_summary, require_role
 from backend.sql_errors import SqlPermissionError, UserAuthorizationRequiredError
 from backend.sql_util import request_connection, request_connections
-from backend.validation import build_lookup_allowed, validate_record_values
+from backend.validation import build_lookup_allowed, build_lookup_rows_by_id, validate_record_values
 from backend.timing import track_request
 from backend.models import (
     AddMemberRequest,
@@ -207,15 +207,15 @@ def create_project(body: CreateProjectRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if body.storage_mode == "existing_uc":
-        if body.storage_type != "uc_delta":
+        if body.storage_type not in ("uc_delta", "lakebase"):
             raise HTTPException(
                 status_code=400,
-                detail="Existing UC table mode requires Unity Catalog (Delta) storage",
+                detail="Existing table mode requires Unity Catalog or Lakebase storage",
             )
         if not body.record_key_column or not body.record_key_column.strip():
             raise HTTPException(
                 status_code=400,
-                detail="record_key_column is required when using an existing UC table",
+                detail="record_key_column is required when using an existing table",
             )
 
     with request_connections(request):
@@ -309,10 +309,10 @@ def update_project(project_id: str, body: UpdateProjectRequest, request: Request
                 status_code=400,
                 detail="Cannot change record sync mode after the collection is published",
             )
-        if project.get("storage_type") != "uc_delta":
+        if project.get("storage_type") not in ("uc_delta", "lakebase"):
             raise HTTPException(
                 status_code=400,
-                detail="Record sync mode applies only to Unity Catalog collections",
+                detail="Record sync mode applies only to Unity Catalog and Lakebase collections",
             )
 
     if "duplicate_key_mode" in updates:
@@ -506,7 +506,13 @@ def publish_project(project_id: str, request: Request, background_tasks: Backgro
 
 def _validate_record_values(project_id: str, fields, values: dict) -> None:
     lookup_allowed = build_lookup_allowed(fields, project_id)
-    errors = validate_record_values(fields, values, lookup_allowed=lookup_allowed)
+    rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
+    errors = validate_record_values(
+        fields,
+        values,
+        lookup_allowed=lookup_allowed,
+        rows_by_lookup_id=rows_by_lookup_id,
+    )
     if errors:
         raise HTTPException(status_code=422, detail={"field_errors": errors})
 
@@ -572,10 +578,12 @@ def create_record(project_id: str, body: CreateRecordRequest, request: Request, 
             )
             timer.mark("load_fields_ms")
             lookup_allowed = build_lookup_allowed(fields, project_id)
+            rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
             errors = validate_record_values(
                 fields,
                 body.values,
                 lookup_allowed=lookup_allowed,
+                rows_by_lookup_id=rows_by_lookup_id,
             )
             timer.mark("validate_ms")
             if errors:
@@ -675,7 +683,7 @@ def sync_staged_records(project_id: str, request: Request):
         if project.get("status") != "published":
             raise HTTPException(
                 status_code=400,
-                detail="Collection must be published before syncing records to Unity Catalog",
+                detail="Collection must be published before syncing staged records",
             )
         fields = repository.list_fields(project_id, published_only=True, project=project)
         try:
@@ -796,6 +804,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
             )
 
         lookup_allowed = build_lookup_allowed(fields, project_id)
+        rows_by_lookup_id = build_lookup_rows_by_id(fields, project_id)
         failed: list[ImportRecordError] = []
         valid_rows: list[tuple[int, dict[str, Any]]] = []
         record_key_col = project.get("record_key_column")
@@ -804,6 +813,7 @@ def import_records(project_id: str, body: ImportRecordsCsvRequest, request: Requ
                 fields,
                 values,
                 lookup_allowed=lookup_allowed,
+                rows_by_lookup_id=rows_by_lookup_id,
                 lenient_select_fields=lenient_select_fields,
             )
             if errors:

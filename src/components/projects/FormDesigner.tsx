@@ -11,6 +11,7 @@ import Typography from '@mui/material/Typography';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import { removeCascadeReferences, syncCascadeLinks } from '../../lib/lookupCascade';
 import type { FieldDefinition, FieldType, LookupTable } from '../../types';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
@@ -45,8 +46,11 @@ function mergeConfig(
 interface FieldDesignerRowProps {
   field: FieldDefinition;
   lookups: LookupTable[];
+  cascadeCandidates: FieldDefinition[];
+  linkedKeys: string[];
   readOnly: boolean;
   onPatch: (patch: Partial<FieldDefinition>) => void;
+  onCascadeChange: (linkedKeys: string[]) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
@@ -57,14 +61,21 @@ interface FieldDesignerRowProps {
 const FieldDesignerRow = memo(function FieldDesignerRow({
   field,
   lookups,
+  cascadeCandidates,
+  linkedKeys,
   readOnly,
   onPatch,
+  onCascadeChange,
   onMoveUp,
   onMoveDown,
   onRemove,
   canMoveUp,
   canMoveDown,
 }: FieldDesignerRowProps) {
+  const lookupId = (field.config_json?.lookup_id as string) || '';
+  const selectedLookup = lookups.find((lookup) => lookup.lookup_id === lookupId);
+  const lookupColumns = selectedLookup?.columns ?? [];
+
   return (
     <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
       <Box sx={{ flex: 1, display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
@@ -140,47 +151,71 @@ const FieldDesignerRow = memo(function FieldDesignerRow({
               select
               label="Lookup table"
               disabled={readOnly}
-              value={(field.config_json?.lookup_id as string) || ''}
+              value={lookupId}
               onChange={(e) => {
-                const lookup = lookups.find((l) => l.lookup_id === e.target.value);
+                const lookup = lookups.find((item) => item.lookup_id === e.target.value);
                 const valueCol = lookup?.columns[0]?.key || 'code';
-                const displayCol = lookup?.columns[1]?.key || lookup?.columns[0]?.key || 'name';
                 onPatch({
-                  config_json: mergeConfig(field, {
+                  config_json: {
                     lookup_id: e.target.value,
                     value_column: valueCol,
-                    display_column: displayCol,
+                    display_column: valueCol,
                     lookup_slug: lookup?.slug,
-                  }),
+                  },
                 });
               }}
             >
-              {lookups.map((l) => (
-                <MenuItem key={l.lookup_id} value={l.lookup_id}>
-                  {l.name}
+              {lookups.map((lookup) => (
+                <MenuItem key={lookup.lookup_id} value={lookup.lookup_id}>
+                  {lookup.name}
                 </MenuItem>
               ))}
             </TextField>
             <TextField
+              select
               label="Value column"
-              disabled={readOnly}
-              value={(field.config_json?.value_column as string) || 'code'}
-              onChange={(e) =>
+              disabled={readOnly || lookupColumns.length === 0}
+              value={(field.config_json?.value_column as string) || lookupColumns[0]?.key || ''}
+              onChange={(e) => {
+                const valueColumn = e.target.value;
                 onPatch({
-                  config_json: mergeConfig(field, { value_column: e.target.value }),
-                })
-              }
-            />
+                  config_json: mergeConfig(field, {
+                    value_column: valueColumn,
+                    display_column: valueColumn,
+                  }),
+                });
+              }}
+            >
+              {lookupColumns.map((column) => (
+                <MenuItem key={column.key} value={column.key}>
+                  {column.label || column.key}
+                </MenuItem>
+              ))}
+            </TextField>
             <TextField
-              label="Display column"
-              disabled={readOnly}
-              value={(field.config_json?.display_column as string) || 'name'}
-              onChange={(e) =>
-                onPatch({
-                  config_json: mergeConfig(field, { display_column: e.target.value }),
-                })
-              }
-            />
+              select
+              SelectProps={{ multiple: true }}
+              label="Linked fields (mutual filter)"
+              disabled={readOnly || !lookupId || cascadeCandidates.length === 0}
+              value={linkedKeys}
+              sx={{ gridColumn: '1 / -1' }}
+              onChange={(e) => {
+                const nextLinked = Array.isArray(e.target.value)
+                  ? e.target.value
+                  : String(e.target.value).split(',');
+                onCascadeChange(nextLinked);
+              }}
+            >
+              {cascadeCandidates.map((candidate) => (
+                <MenuItem key={candidate.field_key} value={candidate.field_key}>
+                  {candidate.label} ({candidate.field_key})
+                </MenuItem>
+              ))}
+            </TextField>
+            <Typography variant="caption" color="text.secondary" sx={{ gridColumn: '1 / -1' }}>
+              Options stay unique and filter each other. When only one lookup row matches, the
+              other linked fields auto-fill.
+            </Typography>
           </>
         )}
       </Box>
@@ -224,6 +259,13 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
     onChange(next.map((f, i) => ({ ...f, sort_order: i })));
   };
 
+  const updateCascadeLinks = (fieldKey: string, linkedKeys: string[]) => {
+    onChange(syncCascadeLinks(sorted, fieldKey, linkedKeys).map((field, index) => ({
+      ...field,
+      sort_order: index,
+    })));
+  };
+
   const addField = () => {
     const label = `Field ${fields.length + 1}`;
     onChange([
@@ -243,7 +285,10 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
 
   const removeField = (index: number) => {
     rowKeysRef.current.splice(index, 1);
-    onChange(sorted.filter((_, i) => i !== index).map((f, i) => ({ ...f, sort_order: i })));
+    const removedKey = sorted[index]?.field_key;
+    const remaining = sorted.filter((_, i) => i !== index);
+    const next = removedKey ? removeCascadeReferences(remaining, removedKey) : remaining;
+    onChange(next.map((field, fieldIndex) => ({ ...field, sort_order: fieldIndex })));
   };
 
   const moveField = (index: number, direction: -1 | 1) => {
@@ -274,21 +319,36 @@ export default function FormDesigner({ fields, lookups, onChange, readOnly = fal
       )}
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {sorted.map((field, index) => (
-          <Paper key={rowKeysRef.current[index]} className="page-card" sx={{ p: 2 }}>
-            <FieldDesignerRow
-              field={field}
-              lookups={lookups}
-              readOnly={readOnly}
-              onPatch={(patch) => updateField(index, patch)}
-              onMoveUp={() => moveField(index, -1)}
-              onMoveDown={() => moveField(index, 1)}
-              onRemove={() => removeField(index)}
-              canMoveUp={index > 0}
-              canMoveDown={index < sorted.length - 1}
-            />
-          </Paper>
-        ))}
+        {sorted.map((field, index) => {
+          const lookupId = (field.config_json?.lookup_id as string) || '';
+          const cascadeCandidates = sorted.filter(
+            (candidate) =>
+              candidate.field_key !== field.field_key &&
+              candidate.field_type === 'lookup' &&
+              (candidate.config_json?.lookup_id as string) === lookupId &&
+              Boolean(lookupId),
+          );
+          const linkedKeys = (field.config_json?.cascade_with as string[] | undefined) ?? [];
+
+          return (
+            <Paper key={rowKeysRef.current[index]} className="page-card" sx={{ p: 2 }}>
+              <FieldDesignerRow
+                field={field}
+                lookups={lookups}
+                cascadeCandidates={cascadeCandidates}
+                linkedKeys={linkedKeys}
+                readOnly={readOnly}
+                onPatch={(patch) => updateField(index, patch)}
+                onCascadeChange={(keys) => updateCascadeLinks(field.field_key, keys)}
+                onMoveUp={() => moveField(index, -1)}
+                onMoveDown={() => moveField(index, 1)}
+                onRemove={() => removeField(index)}
+                canMoveUp={index > 0}
+                canMoveDown={index < sorted.length - 1}
+              />
+            </Paper>
+          );
+        })}
       </Box>
     </Box>
   );

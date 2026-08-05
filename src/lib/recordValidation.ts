@@ -1,4 +1,6 @@
 import type { FieldDefinition } from '../types';
+import type { LookupRowsMap } from './lookupCascade';
+import { validateCascadeCombinations } from './lookupCascade';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -22,6 +24,7 @@ export function validateRecordValues(
   fields: FieldDefinition[],
   values: Record<string, unknown>,
   lookupAllowed: Record<string, Set<string>> = {},
+  rowsByLookupId: LookupRowsMap = {},
 ): Record<string, string> {
   const errors: Record<string, string> = {};
 
@@ -77,6 +80,11 @@ export function validateRecordValues(
         }
       }
     }
+  }
+
+  const cascadeErrors = validateCascadeCombinations(fields, rowsByLookupId, values);
+  for (const [key, message] of Object.entries(cascadeErrors)) {
+    if (!errors[key]) errors[key] = message;
   }
 
   return errors;
